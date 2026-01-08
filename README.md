@@ -1,55 +1,54 @@
-# OraDBA Extension Template
+# OraDBA Autoupgrade (odb_autoupgrade)
 
-This repository is a ready-to-use OraDBA extension template. Copy/clone it,
-rename the extension, and start adding your own scripts, SQL, and RMAN content.
-CI and release workflows are included; the build script only packages the
-extension payload (bin/sql/rcv/etc/lib + metadata/docs), not the dev helpers.
+OraDBA extension for Oracle AutoUpgrade. Ships wrapper scripts, ready-to-use
+configs, and optional docs/patches/JAR layout. Can be installed as an OraDBA
+extension or used standalone; build only packages the extension payload
+(bin/etc/lib + metadata/docs), not the dev helpers.
 
-## Quick Start
+## Quick Start (OraDBA Extension)
+- Clone/copy this repo into `${ORADBA_LOCAL_BASE}`.
+- Build tarball + checksum: `./scripts/build.sh` (outputs to `dist/`).
+- Extract the tarball into `${ORADBA_LOCAL_BASE}`; auto-discovery loads
+  `odb_autoupgrade`.
+- Configure using `etc/` templates; scripts live in `bin/`.
 
-- Clone/copy this repo.
-- Rename the extension metadata: `./scripts/rename-extension.sh --name myext --description "My OraDBA add-ons"`
-- Customize `bin/`, `sql/`, `rcv/`, `etc/`, and `lib/` with your logic.
-- Build tarball + checksum: `./scripts/build.sh`
-- Tag and push to GitHub to publish via the included release workflow.
+## Quick Start (Standalone)
+- Clone/copy this repo anywhere (e.g., `/u00/app/oracle/odb_autoupgrade`).
+- Download/update the AutoUpgrade JAR: `./bin/update_autoupgrade.sh`.
+- Run AutoUpgrade via wrapper: `./bin/run_autoupgrade.sh -config etc/download_patch.cfg -mode download`.
+- Optional: add `bin/` to `PATH`.
 
 ## Structure (repo = extension)
-
 ```text
 .extension                  # Extension metadata (name/version/priority/description)
-README.md                   # Template overview (this file)
+README.md                   # This file
 CHANGELOG.md, VERSION, LICENSE
-bin/                        # Scripts added to PATH
-sql/                        # SQL scripts added to SQLPATH
-rcv/                        # RMAN scripts
-etc/                        # Config examples (not auto-loaded)
+bin/                        # Wrapper scripts (run/update autoupgrade, keystore)
+etc/                        # AutoUpgrade config examples
 lib/                        # Shared helpers
+doc/                        # Docs for the extension
+jar/                        # Place autoupgrade.jar here
+patches/                    # Store patch bundles/metadata
 scripts/                    # Dev tooling (build/rename)
 tests/                      # BATS tests for dev tooling
 .github/workflows/          # CI (lint/tests) and release
 dist/                       # Build outputs (ignored)
+log/                        # Logs (not packaged)
 ```
 
 ## Packaging
-
 - `scripts/build.sh` reads `VERSION` and `.extension` to create `dist/<name>-<version>.tar.gz` plus `<tarball>.sha256`.
-- Only extension payload is included by default (`.extension`, `.checksumignore`,
-  README/CHANGELOG/LICENSE/VERSION, bin/sql/rcv/etc/lib). Dev assets
-  (`scripts/`, `tests/`, `.github/`, `dist/`, `.git*`) are excluded.
+- Payload includes: `.extension`, `.checksumignore`, README/CHANGELOG/LICENSE/VERSION, bin/etc/lib/doc/jar/patches. Dev assets (`scripts/`, `tests/`, `.github/`, `dist/`, `.git*`) are excluded.
 - Override output dir with `--dist`. Override version with `--version`.
-- Build also generates `.extension.checksum` file for integrity verification.
+- Build also generates `.extension.checksum` for integrity verification.
 
 ## Integrity Checking
-
 The `.checksumignore` file specifies patterns for files excluded from integrity checks:
-
 - **Default exclusions**: `.extension`, `.checksumignore`, and `log/` directory
 - **Glob patterns supported**: `*.log`, `keystore/`, `secrets/*.key`, etc.
 - **One pattern per line**: Lines starting with `#` are comments
-- **Common use cases**: credentials, caches, temporary files, user-specific configs
 
 Example `.checksumignore`:
-
 ```text
 # Exclude log directory (already default)
 log/
@@ -64,24 +63,21 @@ cache/
 *.tmp
 ```
 
-When OraDBA verifies extension integrity, files matching these patterns are skipped.
-
 ## Rename Helper
-
 - `scripts/rename-extension.sh --name <newname> [--description "..."] [--workdir <path>]`
-- Updates `.extension`, README, the sample config filename in `etc/`, and
-  references to the old name (including release notes).
+- Updates `.extension`, README, the sample config filename in `etc/`, and references to the old name (including release notes).
 - Run immediately after cloning to avoid manual edits.
 
 ## CI and Releases
-
 - CI: shellcheck for scripts, markdownlint for docs, BATS tests for helper scripts.
-- Release: on tags `v*.*.*` (or manual dispatch), runs lint/tests, builds
-  tarball + checksum, and publishes them as GitHub release assets.
+- Release: on tags `v*.*.*` (or manual dispatch), runs lint/tests, builds tarball + checksum, and publishes them as GitHub release assets.
 
-## Using the Template
+## Using AutoUpgrade
+- Download or update the JAR: `./bin/update_autoupgrade.sh` (stores in `jar/`).
+- Run AutoUpgrade with wrapper: `./bin/run_autoupgrade.sh -config etc/download_patch.cfg -mode download`
+  - Wrapper resolves configs relative to CWD or `etc/`, expands env vars with `envsubst`, and sets `AUTOUPGRADE_BASE`.
+- MOS keystore: create with `create_mos_keystore.sh` and store credentials securely.
 
-1. Add your logic to `bin/`, `sql/`, `rcv/`, `etc/`, and `lib/`.
-2. Keep `.extension` metadata current (name, version, priority).
-3. Users copy any needed settings from `etc/<name>.conf.example` into `${ORADBA_PREFIX}/etc/oradba_customer.conf`.
-4. Extract the tarball into `${ORADBA_LOCAL_BASE}`; auto-discovery will load the extension.
+## Installation Options
+- **OraDBA extension**: place in `${ORADBA_LOCAL_BASE}` and extract tarball; auto-discovery loads it.
+- **Standalone**: clone/unpack anywhere, update JAR, and run via `bin/` scripts.

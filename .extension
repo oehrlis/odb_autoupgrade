@@ -1,7 +1,7 @@
-name: extension-template
-version: 0.1.0
-description: Template OraDBA extension with starter scripts and docs
-author: OraDBA Team
+name: odb_autoupgrade
+version: 0.2.0
+description: OraDBA autoupgrade extension
+author: Stefan Oehrli
 enabled: true
 priority: 50
 provides:

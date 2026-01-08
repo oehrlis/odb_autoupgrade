@@ -22,7 +22,7 @@ else
     ensure_oracle_env() { [[ -n "${ORACLE_SID:-}" ]]; }
 fi
 
-EXTENSION_NAME="${EXTENSION_NAME:-extension-template}"
+EXTENSION_NAME="${EXTENSION_NAME:-odb_autoupgrade}"
 EXTENSION_NAME_UPPER="$(echo "$EXTENSION_NAME" | tr '[:lower:]-' '[:upper:]_')"
 EXTENSION_VERSION="${EXTENSION_VERSION:-0.1.0}"
 
