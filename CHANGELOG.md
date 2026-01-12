@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.3.0 - 2026-01-12
+
+### Changed
+
+- **Development Workflow Enhancement**: Synchronized with oradba_extension template v0.3.0
+  - Comprehensive Makefile with color-coded output and extensive help system
+  - Added categorized help with Development, Build, Version, CI/CD, and Tools sections
+  - New targets: `format`, `format-check`, `check`, `ci`, `pre-commit`, `tools`, `info`, `status`
+  - Version management targets: `version-bump-patch`, `version-bump-minor`, `version-bump-major`, `tag`
+  - Quick shortcuts: `t` (test), `l` (lint), `f` (format), `b` (build), `c` (clean)
+  - Improved error messages and tool installation guidance
+  - Better formatting with consistent indentation and structure
+
+- **CI/CD Improvements**: 
+  - Updated GitHub Actions workflows to use Makefile targets
+  - CI workflow now uses `make lint-shell` and `make lint-markdown` for consistency
+  - Release workflow simplified to use `make ci` for all checks and build
+  - Centralized CI logic in Makefile for better maintainability
+
+- **Documentation**: 
+  - Enhanced README.md Integrity Checking section with more details
+  - Added "Common use cases" description for `.checksumignore` patterns
+  - Added clarification about OraDBA integrity verification process
+  - Better formatting consistency throughout documentation
+
+### Added
+
+- **Development Tools**:
+  - `make tools` - Display status of all development tools (shellcheck, shfmt, markdownlint, bats, git)
+  - `make info` - Show comprehensive project information and file counts
+  - `make status` - Display git status and current version
+  - `make clean-all` - Deep clean including caches and temporary files
+
+- **Pre-commit Support**: New `make pre-commit` target for running format, lint, and test before commits
+
 ## 0.2.0 - 2026-01-07
 
 ### Added
