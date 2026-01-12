@@ -18,9 +18,12 @@
 # ------------------------------------------------------------------------------
 
 # - Default Values -------------------------------------------------------------
+# shellcheck disable=SC2034
 SCRIPT_NAME=$(basename "${BASH_SOURCE[0]}")                             # Script name
 SCRIPT_BIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 SCRIPT_BASE=$(dirname "${SCRIPT_BIN_DIR}")                              # Script base
+# shellcheck disable=SC2034
+# shellcheck disable=SC2034
 SCRIPT_ETC_DIR="${SCRIPT_BASE}/etc"                                     # Config dir
 JAR_DIR="${SCRIPT_BASE}/jar"                                            # Target folder
 JAR_FILE="${JAR_DIR}/autoupgrade.jar"                                   # JAR path

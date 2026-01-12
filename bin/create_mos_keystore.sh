@@ -95,10 +95,16 @@ fi
   cd "$WORKDIR"
 
   # build expect script
+  # shellcheck disable=SC2034 # used by expect environment
   EXP_LOG_USER=$([[ "$QUIET" == "true" ]] && echo 0 || echo 1)
 
-  expect <<'EOF' \
-    -nottycopy
+  EXPECT_AU_JAR="$AU_JAR" \
+  EXPECT_AU_CFG="$AU_CFG" \
+  EXPECT_MOS_USER="$MOS_USER" \
+  EXPECT_MOS_PASS="$MOS_PASS" \
+  EXPECT_KS_PASS="$KS_PASS" \
+  EXP_LOG_USER="$EXP_LOG_USER" \
+  expect <<'EOF'
     # Debug toggles (set to 1 to troubleshoot):
     # log_user 1
     # exp_internal 1
@@ -143,12 +149,7 @@ fi
       timeout { puts "ERROR: timed out during keystore creation"; exit 1 }
     }
 EOF
-) EXPECT_AU_JAR="$AU_JAR" \
-  EXPECT_AU_CFG="$AU_CFG" \
-  EXPECT_MOS_USER="$MOS_USER" \
-  EXPECT_MOS_PASS="$MOS_PASS" \
-  EXPECT_KS_PASS="$KS_PASS" \
-  EXP_LOG_USER="$EXP_LOG_USER"
+)
 
 # --- verify outputs -----------------------------------------------------------
 [[ -f "$EWL" ]] || die "Keystore creation finished but ewallet.p12 not found in $WORKDIR"
@@ -158,4 +159,3 @@ if [[ -f "$CWL" ]]; then
 fi
 chmod 600 "$EWL"
 echo "Keystore created in $WORKDIR"
-

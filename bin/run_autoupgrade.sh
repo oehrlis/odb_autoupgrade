@@ -19,6 +19,7 @@
 # ------------------------------------------------------------------------------
 
 # - Default Values -------------------------------------------------------------
+# shellcheck disable=SC2034
 SCRIPT_NAME=$(basename "${BASH_SOURCE[0]}")
 SCRIPT_BIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 SCRIPT_BASE=$(dirname "${SCRIPT_BIN_DIR}")
@@ -64,8 +65,8 @@ function resolve_config_path {
     fi
 
     # Or finally just look in AUTOUPGRADE_BASE/etc
-    if [[ -f "${AUTOUPGRADE_BASE}/etc/$(basename ${input_path})" ]]; then
-        echo "${AUTOUPGRADE_BASE}/etc/$(basename ${input_path})" && return
+    if [[ -f "${AUTOUPGRADE_BASE}/etc/$(basename "${input_path}")" ]]; then
+        echo "${AUTOUPGRADE_BASE}/etc/$(basename "${input_path}")" && return
     fi
 
     # If not found
