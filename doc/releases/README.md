@@ -8,10 +8,10 @@ This directory contains detailed release notes for OraDBA AutoUpgrade extension.
 
 ## Release History
 
-| Version | Date | Type | Description |
-|---------|------|------|-------------|
+| Version             | Date       | Type          | Description                                                                    |
+|---------------------|------------|---------------|--------------------------------------------------------------------------------|
 | [v0.3.0](v0.3.0.md) | 2026-01-12 | Minor Release | Development workflow enhancements, synchronized with oradba_extension template |
-| v0.2.0 | 2026-01-07 | Minor Release | Checksum exclusion support |
+| v0.2.0              | 2026-01-07 | Minor Release | Checksum exclusion support                                                     |
 
 ## Release Types
 
