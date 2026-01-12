@@ -13,13 +13,13 @@
   - Improved error messages and tool installation guidance
   - Better formatting with consistent indentation and structure
 
-- **CI/CD Improvements**: 
+- **CI/CD Improvements**:
   - Updated GitHub Actions workflows to use Makefile targets
   - CI workflow now uses `make lint-shell` and `make lint-markdown` for consistency
   - Release workflow simplified to use `make ci` for all checks and build
   - Centralized CI logic in Makefile for better maintainability
 
-- **Documentation**: 
+- **Documentation**:
   - Enhanced README.md Integrity Checking section with more details
   - Added "Common use cases" description for `.checksumignore` patterns
   - Added clarification about OraDBA integrity verification process
