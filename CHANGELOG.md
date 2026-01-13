@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.1 - 2026-01-13
+
+### Added
+
+- **Release Notes Documentation** - Comprehensive release notes for version 0.3.1
+  - Added `doc/release_notes/v0.3.1.md` - Enhanced release workflow
+  - Detailed documentation of workflow improvements and features
+  - Professional format with usage examples and best practices
+  - Existing `doc/release_notes/v0.3.0.md` retained
+
+### Changed
+
+- **Release Workflow Enhancement** - Smart release notes generation
+  - Updated `.github/workflows/release.yml` to check for version-specific release notes
+  - Workflow now uses detailed release notes from `doc/release_notes/v{VERSION}.md` if available
+  - Falls back to comprehensive generic notes with proper odb_autoupgrade branding
+  - Improved documentation links specific to autoupgrade operations
+  - Better user experience with professional release documentation
+  - Generic fallback includes installation and usage instructions
+
 ## 0.3.0 - 2026-01-12
 
 ### Changed

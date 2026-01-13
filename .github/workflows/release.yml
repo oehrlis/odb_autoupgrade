@@ -59,18 +59,57 @@ jobs:
         id: release_notes
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          cat > release_notes.md <<EOF
-          # OraDBA Extension Template v${VERSION}
+          RELEASE_NOTES_FILE="doc/release_notes/v${VERSION}.md"
+          
+          # Check if detailed release notes exist
+          if [ -f "$RELEASE_NOTES_FILE" ]; then
+            echo "Using detailed release notes from $RELEASE_NOTES_FILE"
+            cp "$RELEASE_NOTES_FILE" release_notes.md
+          else
+            echo "Release notes file not found, generating generic notes"
+            cat > release_notes.md <<EOF
+          # odb_autoupgrade v${VERSION}
 
-          Extension template tarball for OraDBA.
+          Oracle Database AutoUpgrade automation scripts.
+
+          ## What's Changed
+
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
 
           ## Assets
-          - odb_autoupgrade-${VERSION}.tar.gz
-          - odb_autoupgrade-${VERSION}.tar.gz.sha256
+
+          - **odb_autoupgrade-${VERSION}.tar.gz**: AutoUpgrade scripts and tools
+          - **odb_autoupgrade-${VERSION}.tar.gz.sha256**: Checksum file
+
+          ## Installation
+
+          \`\`\`bash
+          # Download and extract
+          tar xzf odb_autoupgrade-${VERSION}.tar.gz
+          cd odb_autoupgrade
+
+          # Install
+          make install
+          \`\`\`
+
+          ## Documentation
+
+          - [Installation Guide](https://github.com/${{ github.repository }}/blob/main/doc/installation.md)
+          - [Configuration](https://github.com/${{ github.repository }}/blob/main/doc/configuration.md)
+          - [Reference](https://github.com/${{ github.repository }}/blob/main/doc/reference.md)
+          - [Development](https://github.com/${{ github.repository }}/blob/main/doc/development.md)
 
           ## Usage
-          Extract the tarball into ${ORADBA_LOCAL_BASE} and adjust metadata/configs as needed.
+
+          \`\`\`bash
+          # Run AutoUpgrade
+          run_autoupgrade.sh --sid ORCL --target 19.25
+
+          # Update AutoUpgrade jar
+          update_autoupgrade.sh --target 19.25
+          \`\`\`
           EOF
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
