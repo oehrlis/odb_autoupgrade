@@ -4,6 +4,7 @@ description: OraDBA autoupgrade extension
 author: Stefan Oehrli
 enabled: true
 priority: 50
+uses_oradba_libs: false
 provides:
   bin: true
   sql: true
