@@ -1,8 +1,8 @@
-# GitHub Copilot Instructions for OraDBA Autoupgrade Extension
+# GitHub Copilot Instructions for OraDBA Extension Template
 
 ## Project Overview
 
-OraDBA Autoupgrade (odb_autoupgrade) is an OraDBA extension for Oracle AutoUpgrade. It provides wrapper scripts for downloading, updating, and running Oracle AutoUpgrade, along with ready-to-use configuration templates. The extension manages AutoUpgrade JAR files, patches, and MOS (My Oracle Support) credentials for automated Oracle database upgrades.
+OraDBA Extension Template is a ready-to-use template for creating OraDBA extensions. Extensions add custom scripts, SQL queries, RMAN backups, and configurations to OraDBA installations. This template provides a complete project structure with CI/CD, testing, and release automation.
 
 ## Code Quality Standards
 
@@ -18,40 +18,38 @@ OraDBA Autoupgrade (odb_autoupgrade) is an OraDBA extension for Oracle AutoUpgra
 ### Naming Conventions
 
 - **Scripts**: `lowercase_with_underscores.sh`
-- **Config files**: `lowercase_with_underscores.cfg`
+- **SQL files**: `lowercase_with_underscores.sql`
+- **RMAN files**: `lowercase_with_underscores.rcv`
 - **Tests**: `test_feature.bats`
 - **Documentation**: `lowercase-with-hyphens.md`
 
 ## Project Structure
 
 ```
-odb_autoupgrade/
+oradba_extension/
 ├── .extension           # Extension metadata (name, version, priority)
 ├── .checksumignore     # Files excluded from integrity checks
 ├── VERSION             # Semantic version
-├── bin/                # Wrapper scripts (run/update autoupgrade, keystore)
-│   ├── run_autoupgrade.sh      # Main wrapper for AutoUpgrade
-│   ├── update_autoupgrade.sh   # Download/update AutoUpgrade JAR
-│   └── create_mos_keystore.sh  # MOS credential management
-├── etc/                # AutoUpgrade config templates
-│   ├── download_patch.cfg      # Patch download config
-│   └── download_RU*.cfg        # Release Update configs
+├── bin/                # Executable scripts (added to PATH)
+├── sql/                # SQL scripts (added to SQLPATH)
+├── rcv/                # RMAN scripts
+├── etc/                # Configuration examples
 ├── lib/                # Shared library functions
-├── jar/                # AutoUpgrade JAR storage (not packaged)
-├── patches/            # Patch bundles storage (not packaged)
-├── doc/                # Documentation
 ├── scripts/            # Build and development tools
-└── tests/              # BATS test files
+├── tests/              # BATS test files
+└── doc/                # Documentation
 
 ```
 
 ## Extension Metadata (.extension)
 
+The `.extension` file defines extension properties:
+
 ```ini
-name: odb_autoupgrade
-version: 0.3.1
-description: OraDBA autoupgrade extension
-author: Stefan Oehrli
+name: my_extension
+version: 1.0.0
+description: Brief description of extension
+author: Author Name
 enabled: true
 priority: 50
 provides:
@@ -59,67 +57,58 @@ provides:
   sql: true
   rcv: true
   etc: true
+  doc: true
 ```
 
-## Key Features
-
-### AutoUpgrade Wrapper (run_autoupgrade.sh)
-
-- Resolves config files relative to CWD or `etc/` directory
-- Expands environment variables in configs using `envsubst`
-- Sets `AUTOUPGRADE_BASE` for AutoUpgrade runtime
-- Supports all AutoUpgrade modes (analyze, deploy, download)
-- Handles AutoUpgrade JAR location automatically
-
-### JAR Update (update_autoupgrade.sh)
-
-- Downloads latest AutoUpgrade JAR from Oracle
-- Stores JAR in `jar/` directory
-- Validates JAR integrity
-- Supports specific version downloads
-- Manages JAR versioning
-
-### MOS Keystore (create_mos_keystore.sh)
-
-- Creates secure keystore for MOS credentials
-- Stores username and password encrypted
-- Used by AutoUpgrade for patch downloads
-- Follows Oracle security best practices
+**Key fields:**
+- `name`: Extension identifier (lowercase, no spaces)
+- `version`: Semantic version (MAJOR.MINOR.PATCH)
+- `priority`: Load order (lower = earlier, 0-100)
+- `provides`: Declares which directories the extension uses
 
 ## Development Workflow
+
+### Creating a New Extension
+
+1. **Clone template**: `git clone https://github.com/oehrlis/oradba_extension.git my_extension`
+2. **Rename extension**: `./scripts/rename-extension.sh --name myext --description "My extension"`
+3. **Update VERSION**: Set initial version
+4. **Implement**: Add scripts to `bin/`, `sql/`, `rcv/`, `lib/`
+5. **Test**: Add tests to `tests/` and run `make test`
+6. **Document**: Update `README.md` and `doc/`
 
 ### Making Changes
 
 1. **Test locally**: Run `make test` before committing
 2. **Lint code**: Run `make lint` (shellcheck + markdownlint)
-3. **Update configs**: Keep config templates in `etc/` current
-4. **Update docs**: Document configuration changes
-5. **Update CHANGELOG**: Document all changes
+3. **Update tests**: Add/update tests for new functionality
+4. **Update docs**: Keep documentation in sync
+5. **Update CHANGELOG**: Document changes in CHANGELOG.md
 
 ### Testing
 
 - **Run all tests**: `make test` or `bats tests/`
-- **Test wrapper**: Test with various AutoUpgrade configs
-- **Test JAR download**: Verify update_autoupgrade.sh functionality
-- **Test keystore**: Verify credential encryption works
+- **Specific test**: `bats tests/test_file.bats`
+- **Verbose output**: `bats -t tests/`
+- **Test coverage**: Aim for high coverage of custom scripts
 
 ### Building
 
 - **Build package**: `make build` creates tarball in `dist/`
-- **Output**: `dist/odb_autoupgrade-<version>.tar.gz` + `.sha256` checksum
-- **Included**: `.extension`, `VERSION`, docs, `bin/`, `etc/`, `lib/`
-- **Excluded**: `jar/`, `patches/`, `log/`, dev tools
+- **Output**: `dist/<name>-<version>.tar.gz` + `.sha256` checksum
+- **Included files**: `.extension`, `VERSION`, `README.md`, `CHANGELOG.md`, `LICENSE`, `bin/`, `sql/`, `rcv/`, `etc/`, `lib/`, `doc/`
+- **Excluded files**: `scripts/`, `tests/`, `.github/`, `dist/`, `.git*`
 
 ## Common Patterns
 
-### Script Template with AutoUpgrade Support
+### Script Template
 
 ```bash
 #!/usr/bin/env bash
 #
-# Script Name: my_autoupgrade_tool.sh
-# Description: AutoUpgrade helper script
-# Author: Stefan Oehrli
+# Script Name: my_tool.sh
+# Description: Brief description
+# Author: Your Name
 # Version: 1.0.0
 #
 
@@ -127,170 +116,202 @@ set -euo pipefail
 
 readonly SCRIPT_NAME="$(basename "${0}")"
 readonly SCRIPT_DIR="$(cd "$(dirname "${0}")" && pwd)"
-readonly AUTOUPGRADE_BASE="${AUTOUPGRADE_BASE:-${SCRIPT_DIR}/..}"
 
+# ------------------------------------------------------------------------------
+# Function: show_usage
+# Purpose.: Display usage information
+# Returns.: 0
+# Output..: Usage information to stdout
+# ------------------------------------------------------------------------------
 show_usage() {
     cat <<EOF
 Usage: ${SCRIPT_NAME} [OPTIONS]
 
 Options:
     -h, --help          Show this help
-    -c, --config FILE   AutoUpgrade config file
-    -m, --mode MODE     AutoUpgrade mode (analyze|deploy|download)
+    -v, --verbose       Verbose output
 EOF
 }
 
-# Check AutoUpgrade JAR
-check_autoupgrade_jar() {
-    local jar_file="${AUTOUPGRADE_BASE}/jar/autoupgrade.jar"
-    if [[ ! -f "${jar_file}" ]]; then
-        echo "Error: AutoUpgrade JAR not found at ${jar_file}" >&2
-        echo "Run: update_autoupgrade.sh to download it" >&2
-        return 1
-    fi
-}
-
+# ------------------------------------------------------------------------------
+# Function: main
+# Purpose.: Main entry point for the script
+# Returns.: 0 on success, 1 on error
+# ------------------------------------------------------------------------------
 main() {
-    check_autoupgrade_jar
+    # Check OraDBA environment
+    if [[ -z "${ORADBA_BASE:-}" ]]; then
+        echo "Error: OraDBA not loaded" >&2
+        exit 1
+    fi
     
     # Main logic here
-    echo "AutoUpgrade tool running"
+    echo "Script running"
 }
 
-# Parse arguments and run
-main "$@"
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "${1}" in
+        -h|--help)
+            show_usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: ${1}" >&2
+            show_usage
+            exit 1
+            ;;
+    esac
+done
+
+main
 ```
 
-### AutoUpgrade Config Template
+### Function Header Template
 
-```properties
-# ============================================================================
-# AutoUpgrade Configuration
-# Description: Configuration for database upgrade
-# ============================================================================
-
-global.autoupg_log_dir=/u01/app/oracle/autoupgrade/logs
-
-# Source database
-upg1.source_home=${ORACLE_HOME_19c}
-upg1.target_home=${ORACLE_HOME_21c}
-upg1.sid=ORCL
-upg1.log_dir=/u01/app/oracle/autoupgrade/logs/ORCL
-upg1.upgrade_node=localhost
-upg1.target_version=21.3
-```
-
-### Handling MOS Credentials
+All functions must include standardized headers:
 
 ```bash
-# Create keystore
-create_mos_keystore.sh
+# ------------------------------------------------------------------------------
+# Function: function_name
+# Purpose.: Brief description of what the function does
+# Args....: $1 - Description of first argument
+#           $2 - Description of second argument (optional)
+# Returns.: 0 on success, 1 on error
+# Output..: Description of what gets printed to stdout
+# Notes...: Additional context, usage examples, or warnings (optional)
+# ------------------------------------------------------------------------------
+function_name() {
+    local arg1="$1"
+    local arg2="${2:-default}"
+    
+    # Function implementation
+}
+```
 
-# Use in AutoUpgrade config
-upg1.mos_user=username@example.com
-upg1.mos_pass_file=${AUTOUPGRADE_BASE}/keystore/mos.keystore
+**Header Field Descriptions:**
+- `Function:` - Function name (required)
+- `Purpose.:` - Brief description (required)
+- `Args....:` - Arguments with descriptions, one per line (if applicable)
+- `Returns.:` - Return codes and their meanings (required)
+- `Output..:` - What is printed to stdout/stderr (if applicable)
+- `Notes...:` - Additional information, examples, warnings (optional)
+
+### SQL Script Template
+
+```sql
+-- ============================================================================
+-- Script: my_query.sql
+-- Description: Brief description
+-- ============================================================================
+
+SET LINESIZE 200
+SET PAGESIZE 1000
+
+SELECT name, value
+FROM v$parameter
+WHERE name LIKE '%memory%'
+ORDER BY name;
+```
+
+### RMAN Script Template
+
+```sql
+-- ============================================================================
+-- RMAN: my_backup.rcv
+-- Description: Brief description
+-- ============================================================================
+
+CONFIGURE RETENTION POLICY TO REDUNDANCY 2;
+
+RUN {
+    ALLOCATE CHANNEL disk1 DEVICE TYPE DISK;
+    BACKUP DATABASE PLUS ARCHIVELOG;
+    DELETE NOPROMPT OBSOLETE;
+    RELEASE CHANNEL disk1;
+}
+```
+
+### Test Template
+
+```bash
+#!/usr/bin/env bats
+
+setup() {
+    export TEST_DIR="${BATS_TEST_TMPDIR}/test_$$"
+    mkdir -p "${TEST_DIR}"
+}
+
+teardown() {
+    rm -rf "${TEST_DIR}"
+}
+
+@test "Extension metadata exists" {
+    [ -f .extension ]
+}
+
+@test "My script is executable" {
+    [ -x bin/my_tool.sh ]
+}
 ```
 
 ## Integrity Checking
 
-The `.checksumignore` file excludes dynamic content:
+The `.checksumignore` file excludes files from integrity verification:
 
 ```text
-# Extension metadata
+# Extension metadata (always excluded)
 .extension
 .checksumignore
 
-# Runtime artifacts (not packaged)
-jar/
-patches/
+# Logs and temporary files
 log/
+*.log
+*.tmp
 
-# Credentials
+# User-specific configurations
 keystore/
 *.key
-*.pem
-
-# Temporary files
-*.tmp
-*.log
 ```
 
-## Configuration Files
-
-### Config File Location
-
-AutoUpgrade configs can be:
-1. Absolute path: `/path/to/config.cfg`
-2. Relative to CWD: `./config.cfg`
-3. Relative to `etc/`: Resolved automatically by wrapper
-
-### Environment Variable Expansion
-
-Configs support environment variables:
-
-```properties
-# Before expansion
-upg1.source_home=${ORACLE_HOME_19c}
-upg1.target_home=${ORACLE_HOME_21c}
-
-# After expansion (via envsubst)
-upg1.source_home=/u01/app/oracle/product/19.0.0/dbhome_1
-upg1.target_home=/u01/app/oracle/product/21.0.0/dbhome_1
-```
-
-## Integration with OraDBA
-
-### Environment Variables
-
-The extension uses:
-- `${ORADBA_BASE}`: OraDBA installation directory
-- `${ORACLE_HOME}`: Current Oracle Home (for source/target)
-- `${AUTOUPGRADE_BASE}`: AutoUpgrade extension base directory
-
-### Auto-Discovery
-
-When installed in `${ORADBA_LOCAL_BASE}`, OraDBA auto-discovers:
-- `bin/*.sh` scripts added to PATH
-- Extension loaded with priority 50
+**Common exclusions:**
+- Log directories and files
+- Credentials and secrets
+- Cache and temporary files
+- User-specific configs
 
 ## Release Process
 
-1. **Update VERSION**: Bump version (e.g., 0.3.1 → 0.3.2)
-2. **Update CHANGELOG.md**: Document changes
+1. **Update VERSION**: Bump version following semantic versioning
+2. **Update CHANGELOG.md**: Document all changes
 3. **Update .extension**: Ensure version matches VERSION file
 4. **Test**: Run `make test` and `make lint`
-5. **Build**: Run `make build` to verify
-6. **Commit**: `git commit -m "chore: Release vX.Y.Z"`
+5. **Build**: Run `make build` to verify build succeeds
+6. **Commit**: `git add . && git commit -m "chore: Release vX.Y.Z"`
 7. **Tag**: `git tag -a vX.Y.Z -m "Release vX.Y.Z"`
 8. **Push**: `git push origin main --tags`
 
+**Note**: GitHub Actions automatically builds and publishes releases when tags are pushed.
+
 ## When Generating Code
 
-- Follow AutoUpgrade best practices and patterns
-- Use wrapper scripts for AutoUpgrade operations
-- Support environment variable expansion in configs
-- Handle missing JAR gracefully (suggest update_autoupgrade.sh)
-- Validate config files before running AutoUpgrade
-- Add appropriate error handling
+- Follow existing template patterns for scripts
+- Use strict error handling (`set -euo pipefail`)
+- Always check for OraDBA environment (`${ORADBA_BASE}`)
+- Quote all variables
+- Add appropriate tests for new functionality
 - Update documentation
 - **Always ask clarifying questions** when requirements are unclear
-- **Avoid hardcoded paths** - Use `${AUTOUPGRADE_BASE}` variable
+- **Avoid hardcoded values** - Use variables and configuration
 
 ## Best Practices
 
 ### Error Handling
 
 ```bash
-# Check JAR exists
-if [[ ! -f "${AUTOUPGRADE_BASE}/jar/autoupgrade.jar" ]]; then
-    echo "Error: AutoUpgrade JAR not found" >&2
-    echo "Run: update_autoupgrade.sh" >&2
-    exit 1
-fi
-
-# Validate config file
-if [[ ! -f "${config_file}" ]]; then
-    echo "Error: Config file not found: ${config_file}" >&2
+# Check prerequisites
+if [[ ! -d "${ORADBA_BASE}" ]]; then
+    echo "Error: OraDBA not found" >&2
     exit 1
 fi
 
@@ -299,59 +320,82 @@ if [[ -z "${ORACLE_HOME:-}" ]]; then
     echo "Error: ORACLE_HOME not set" >&2
     exit 1
 fi
+
+# Validate input
+if [[ -z "${database_sid}" ]]; then
+    echo "Error: Database SID required" >&2
+    exit 1
+fi
+```
+
+### File Operations
+
+```bash
+# Safe file creation
+if [[ -f "${output_file}" ]]; then
+    echo "Warning: File exists, backing up" >&2
+    cp "${output_file}" "${output_file}.bak"
+fi
+
+# Temporary files
+temp_file=$(mktemp)
+trap 'rm -f "${temp_file}"' EXIT
 ```
 
 ### Logging
 
 ```bash
-# Consistent logging
+# Use consistent logging
 log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*" >&2
 }
 
-log "Starting AutoUpgrade operation"
-log "Config file: ${config_file}"
-log "Mode: ${mode}"
+log "Starting process"
+log "Process completed"
 ```
 
-### Config File Handling
+## Integration with OraDBA
 
-```bash
-# Resolve config path
-resolve_config() {
-    local config="$1"
-    
-    # Absolute path
-    if [[ "${config}" = /* ]]; then
-        echo "${config}"
-        return 0
-    fi
-    
-    # Relative to CWD
-    if [[ -f "${config}" ]]; then
-        echo "${PWD}/${config}"
-        return 0
-    fi
-    
-    # Relative to etc/
-    if [[ -f "${AUTOUPGRADE_BASE}/etc/${config}" ]]; then
-        echo "${AUTOUPGRADE_BASE}/etc/${config}"
-        return 0
-    fi
-    
-    echo "Error: Config not found: ${config}" >&2
-    return 1
-}
-```
+### Environment Variables
+
+Extensions can access OraDBA variables:
+- `${ORADBA_BASE}`: OraDBA installation directory
+- `${ORADBA_PREFIX}`: OraDBA prefix path
+- `${ORACLE_HOME}`: Current Oracle Home
+- `${ORACLE_SID}`: Current database SID
+
+### Loading Extensions
+
+OraDBA auto-discovers extensions in:
+- `${ORADBA_LOCAL_BASE}/*/bin/*.sh` (executable scripts)
+- `${ORADBA_LOCAL_BASE}/*/sql/*.sql` (SQL scripts)
+- `${ORADBA_LOCAL_BASE}/*/rcv/*.rcv` (RMAN scripts)
+
+### Configuration
+
+Users copy settings from `etc/<name>.conf.example` to:
+- `${ORADBA_PREFIX}/etc/oradba_customer.conf` (site-wide)
+- Or load directly in extension scripts
 
 ## Security Considerations
 
-- Never hardcode MOS credentials in scripts or configs
-- Use keystore for credential storage
-- Protect keystore with appropriate file permissions (600)
-- Log credential operations without exposing values
-- Validate file permissions before operations
-- Use secure temporary file handling
+- Never hardcode passwords or credentials
+- Use environment variables for sensitive data
+- Validate all user inputs
+- Check file permissions before operations
+- Use secure defaults
+- Log security-relevant events
+
+## Documentation
+
+- **README.md**: Quick start and overview
+- **doc/index.md**: Main documentation
+- **doc/installation.md**: Installation guide
+- **doc/configuration.md**: Configuration reference
+- **doc/reference.md**: API and script reference
+- **CHANGELOG.md**: Version history
+
+Keep documentation concise, clear, and current with code changes.
 
 ## Debugging
 
@@ -359,18 +403,18 @@ resolve_config() {
 # Enable debug mode
 set -x
 
-# Debug AutoUpgrade wrapper
-AUTOUPGRADE_BASE=/path/to/extension bash -x bin/run_autoupgrade.sh -config myconfig.cfg
+# Debug specific section
+(set -x; my_function)
 
-# Check environment
-echo "AUTOUPGRADE_BASE: ${AUTOUPGRADE_BASE}"
-echo "ORACLE_HOME: ${ORACLE_HOME}"
-ls -l "${AUTOUPGRADE_BASE}/jar/"
+# Add debug output
+if [[ "${DEBUG:-false}" == "true" ]]; then
+    echo "DEBUG: variable=${variable}" >&2
+fi
 ```
 
 ## Resources
 
-- [Oracle AutoUpgrade Documentation](https://docs.oracle.com/en/database/oracle/oracle-database/21/upgrd/using-autoupgrade-oracle-database-upgrades.html)
-- [OraDBA Extension Documentation](doc/)
+- [OraDBA Extension Documentation](doc/development.md)
 - [Bash Best Practices](https://bertvv.github.io/cheat-sheets/Bash.html)
+- [BATS Testing](https://bats-core.readthedocs.io/)
 - [ShellCheck](https://www.shellcheck.net/)
