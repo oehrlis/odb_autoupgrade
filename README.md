@@ -77,6 +77,23 @@ cache/
 
 When OraDBA verifies extension integrity, files matching these patterns are skipped.
 
+## Extension Hooks (env/aliases)
+
+This extension supports optional OraDBA etc hook files:
+
+- `etc/env.sh`
+- `etc/aliases.sh`
+
+Current default in `.extension`:
+
+- `load_env: false`
+- `load_aliases: false`
+
+To enable hook sourcing, set both:
+
+1. Global switch `ORADBA_EXTENSIONS_SOURCE_ETC=true`
+2. Set `load_env: true` and/or `load_aliases: true` in `.extension`
+
 ## Rename Helper
 
 - `scripts/rename-extension.sh --name <newname> [--description "..."] [--workdir <path>]`

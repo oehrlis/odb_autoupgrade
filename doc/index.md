@@ -1,5 +1,8 @@
 # OraDBA Extension Template
 
+Current version: see [`../VERSION`](../VERSION) | [Release Notes](release_notes/)
+Latest release: [v0.4.0](release_notes/v0.4.0.md)
+
 A ready-to-use template for creating OraDBA extensions with complete project structure,
 build tooling, CI/CD workflows, and integrity verification.
 
@@ -142,6 +145,23 @@ tar -xzf myext-1.0.0.tar.gz
 - [Configuration](configuration.md) - Configuration options and examples
 - [Reference](reference.md) - Scripts and tools reference
 - [Development](development.md) - Development guide for contributors
+- [Release Notes](release_notes/) - Version history and changes
+- [v0.4.0 Release Note](release_notes/v0.4.0.md) - Optional env/alias hook support
+
+## Extension Hooks (env/aliases)
+
+The extension includes optional hook files in `etc/`:
+
+- `etc/env.sh`
+- `etc/aliases.sh`
+
+By default these hooks are disabled in `.extension`:
+
+- `load_env: false`
+- `load_aliases: false`
+
+To enable them, set `ORADBA_EXTENSIONS_SOURCE_ETC=true` and change the
+corresponding `.extension` flags to `true`.
 
 ## Use Cases
 

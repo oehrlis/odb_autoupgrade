@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.0 - 2026-02-17
+
+### Added
+
+- **Optional extension etc hook scaffolding**
+  - Added explicit `.extension` metadata flags:
+    - `load_env: false`
+    - `load_aliases: false`
+  - Added `etc/env.sh` as optional environment hook
+  - Added `etc/aliases.sh` as optional aliases hook
+  - Hook support is disabled by default and can be enabled explicitly per extension
+
+### Documentation
+
+- Added release notes for v0.4.0: `doc/release_notes/v0.4.0.md`
+- Updated README and documentation index with env/alias hook usage details
+
 ## 0.3.1 - 2026-01-13
 
 ### Added
