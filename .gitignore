@@ -5,3 +5,10 @@ node_modules/
 *.log
 *.tmp
 *.swp
+# aitk-managed - do not commit (deployed from ai-toolkit)
+# A project-own file under these paths needs an explicit `git add -f`.
+.claude/skills/
+.claude/rules/
+.claude/commands/
+.claude/agents/
+.github/copilot-instructions.md
