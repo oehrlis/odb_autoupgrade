@@ -5,3 +5,32 @@ node_modules/
 *.log
 *.tmp
 *.swp
+# aitk-managed - do not commit (deployed from ai-toolkit)
+# A project-own file under these paths needs an explicit `git add -f`.
+.claude/skills/
+.claude/rules/
+.claude/commands/
+.claude/agents/
+.github/copilot-instructions.md
+.claude/worktrees/
+
+# Local working material - never commit
+ref/
+tasks/
+
+# AutoUpgrade runtime data - never commit (credentials, binaries, logs)
+etc/autoupgrade.env
+keystore/
+logs/
+jar/*.jar
+patches/*
+!patches/README.md
+*.zip
+*.p12
+*.sso
+*.jks
+*.pem
+*.key
+*.lck
+.autoupgrade/
+etc/*.env

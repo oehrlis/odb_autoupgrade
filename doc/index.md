@@ -143,6 +143,7 @@ tar -xzf myext-1.0.0.tar.gz
 
 - [Installation](installation.md) - Detailed installation and setup instructions
 - [Configuration](configuration.md) - Configuration options and examples
+- [Proxy and Truststore](proxy-and-truststore.md) - Proxy and truststore configuration for patch downloads
 - [Reference](reference.md) - Scripts and tools reference
 - [Development](development.md) - Development guide for contributors
 - [Release Notes](release_notes/) - Version history and changes

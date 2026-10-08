@@ -37,10 +37,20 @@ log/
 # *.tmp
 
 # Credentials and secrets
-# keystore/
-# secrets/
-# *.key
-# *.pem
+keystore/
+etc/autoupgrade.env
+etc/*.env
+*.p12
+*.sso
+*.jks
+*.pem
+*.key
+.autoupgrade/
+
+# AutoUpgrade runtime data (jar is updated in place by update_autoupgrade.sh)
+jar/*.jar
+patches/
+logs/
 
 # Cache files
 # cache/

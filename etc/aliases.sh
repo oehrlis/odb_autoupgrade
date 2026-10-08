@@ -14,4 +14,4 @@
 # ------------------------------------------------------------------------------
 
 alias autoupgrade='cd "${ODB_AUTOUPGRADE_BASE:-${ORADBA_LOCAL_BASE}/odb_autoupgrade}"'
-alias au='run_autoupgrade.sh'
+alias au='au_run.sh'

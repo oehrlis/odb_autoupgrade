@@ -16,9 +16,9 @@ extension or used standalone; build only packages the extension payload
 ## Quick Start (Standalone)
 
 - Clone/copy this repo anywhere (e.g., `/u00/app/oracle/odb_autoupgrade`).
-- Download/update the AutoUpgrade JAR: `./bin/update_autoupgrade.sh`.
+- Download/update the AutoUpgrade JAR: `./bin/au_update_jar.sh`.
 - Run AutoUpgrade via wrapper:
-  `./bin/run_autoupgrade.sh -config etc/download_patch.cfg -mode download`.
+  `./bin/au_run.sh -config au_download.cfg -patch -mode download`.
 - Optional: add `bin/` to `PATH`.
 
 ## Structure (repo = extension)
@@ -109,11 +109,22 @@ To enable hook sourcing, set both:
 
 ## Using AutoUpgrade
 
-- Download or update the JAR: `./bin/update_autoupgrade.sh` (stores in `jar/`).
+- Download or update the JAR: `./bin/au_update_jar.sh` (stores in `jar/`).
 - Run AutoUpgrade with wrapper:
-  `./bin/run_autoupgrade.sh -config etc/download_patch.cfg -mode download`
+  `./bin/au_run.sh -config au_download.cfg -patch -mode download`
   - Wrapper resolves configs relative to CWD or `etc/`, expands env vars with `envsubst`, and sets `AUTOUPGRADE_BASE`.
-- MOS keystore: create with `create_mos_keystore.sh` and store credentials securely.
+- MOS keystore: create with `./bin/au_keystore.sh` and store credentials securely.
+
+## Renamed Scripts (v0.5.0)
+
+The following scripts were renamed. Old names remain as deprecated shims
+(exec-delegation only) and will be removed in version 1.0.
+
+| Old name | New name |
+| --- | --- |
+| `bin/run_autoupgrade.sh` | `bin/au_run.sh` |
+| `bin/update_autoupgrade.sh` | `bin/au_update_jar.sh` |
+| `bin/create_mos_keystore.sh` | `bin/au_keystore.sh` |
 
 ## Installation Options
 

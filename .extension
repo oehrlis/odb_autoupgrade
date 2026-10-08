@@ -1,5 +1,5 @@
 name: odb_autoupgrade
-version: 0.4.0
+version: 0.5.0
 description: OraDBA autoupgrade extension
 author: Stefan Oehrli
 enabled: true
