@@ -159,7 +159,7 @@ EOF
 
 # Create a keystore directory with valid wallet files (perms 0600)
 make_keystore() {
-    local ks_dir="${1:-${WORK_DIR}/keystore}"
+    local ks_dir="${WORK_DIR}/keystore"
     mkdir -p "${ks_dir}"
     touch "${ks_dir}/ewallet.p12" "${ks_dir}/cwallet.sso"
     chmod 600 "${ks_dir}/ewallet.p12" "${ks_dir}/cwallet.sso"
