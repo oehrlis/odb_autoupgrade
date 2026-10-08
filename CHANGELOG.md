@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.5.0 - 2026-10-08
+
+### Added
+
+- **Proxy and truststore handling** in `bin/au_run.sh` (fixes PKIX
+  `unable to find valid certification path` behind proxies with TLS inspection)
+  - Proxy from `AUTOUPGRADE_PROXY` > `https_proxy` > `HTTPS_PROXY` > `http_proxy` > `HTTP_PROXY`,
+    `none` disables; credentials in the URL are stripped with a warning
+  - Exports a sanitized lowercase `https_proxy` (the only proxy variable AutoUpgrade reads) and passes
+    `-Dhttps.proxyHost/Port`, `-Dhttp.proxyHost/Port`, `-Dhttp.nonProxyHosts` (from `no_proxy`)
+  - OS truststore (`/etc/pki/ca-trust/extracted/java/cacerts`, `/etc/ssl/certs/java/cacerts`) instead of
+    the Oracle Home JDK cacerts; override with `AUTOUPGRADE_TRUSTSTORE` (`none` = JDK default)
+  - `AUTOUPGRADE_JAVA_HOME`, `AUTOUPGRADE_JAVA_OPTS`, `AUTOUPGRADE_JAVA_SUPPORTED`,
+    `AUTOUPGRADE_DEBUG_SSL`, `AUTOUPGRADE_DRY_RUN`; JVM options on the command line, not `JAVA_TOOL_OPTIONS`
+- `lib/au_lib.sh` - shared Java, proxy, truststore, env file and config checks
+- `etc/autoupgrade.env.example` - optional site settings and template variables
+- Generic templates `etc/au_download.cfg`, `etc/au_create_home.cfg`, `etc/au_deploy.cfg` - no file per RU;
+  one patch list `AU_PATCH` (default `RECOMMENDED`, pinned via `patches/au_patch.env`), gold image via
+  `AU_GOLD_IMAGE=YES`, create_home and deploy without keystore
+- `bin/au_check_connectivity.sh` - pre-flight check of endpoints, TLS issuer, keystore and JAR version
+- `doc/proxy-and-truststore.md` - symptom, cause, configuration, required network endpoints
+- BATS tests for the wrapper, the library and the connectivity check
+
+### Changed
+
+- Scripts renamed to the `au_` prefix: `au_run.sh`, `au_update_jar.sh`, `au_keystore.sh`; the old names
+  remain as deprecation shims until 1.0
+- `au_keystore.sh` runs AutoUpgrade through `au_run.sh` (proxy, truststore) and answers the 26.x auto-login
+  prompt (`--auto-login YES|SHARED|NO`)
+- `etc/autoupgrade.env` no longer overrides variables set by the caller
+- Java version check is configurable; Oracle Home JDK is preferred over `PATH`
+- Config files abort with a list of unset variables instead of expanding them to empty strings
+- `.gitignore` and `.checksumignore` exclude keystore, JAR, patches, logs and `etc/autoupgrade.env`
+
+### Security
+
+- `etc/autoupgrade.env` is refused unless owned by the current user and not group/world writable; caller
+  variables are restored without `eval`
+- `patches/au_patch.env` is parsed (only `AU_PATCH=`), never sourced, with ownership and permission checks
+- `envsubst` expands only the variables referenced in the config; values with newlines are rejected
+- Proxy URL parsing strips credentials reliably (also with `/` in the password) and validates host and port
+- `-Djavax.net.ssl.trustStorePassword` is passed only when `AUTOUPGRADE_TRUSTSTORE_PASS` is set
+- `au_keystore.sh`: passwords on the command line require `--insecure-argv`; passwords are not inherited
+  by AutoUpgrade; `umask 077`, keystore directory `0700`, symlinks refused, WARN for `--auto-login SHARED`
+- `au_check_connectivity.sh`: curl verifies against the same truststore as Java; truststore errors are FAIL;
+  issuer check matches the CA organisation exactly across all redirect hops
+- `au_update_jar.sh`: HTTPS-only download, zip and size check, SHA-256 printed
+
+### Fixed
+
+- AutoUpgrade exit code is propagated by the wrapper
+- Wrapper aborts when the `-config` file is not found
+- Temporary config is removed reliably (portable `mktemp`, `trap`)
+
 ## 0.4.0 - 2026-02-17
 
 ### Added

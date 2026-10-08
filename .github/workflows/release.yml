@@ -103,10 +103,10 @@ jobs:
 
           \`\`\`bash
           # Run AutoUpgrade
-          run_autoupgrade.sh --sid ORCL --target 19.25
+          au_run.sh -config au_download.cfg -patch -mode download
 
           # Update AutoUpgrade jar
-          update_autoupgrade.sh --target 19.25
+          au_update_jar.sh
           \`\`\`
           EOF
           fi
