@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `doc/design.md` - Phase 2 design: inventory legacy vs target, target architecture, configuration precedence,
+  gold image paths, field findings mapping, work packages and decisions
+
 ## 0.5.0 - 2026-10-08
 
 ### Added
