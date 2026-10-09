@@ -5,8 +5,8 @@
 # Name.......: au_check_connectivity.sh
 # Author.....: Stefan Oehrli (oes) stefan.oehrli@oradba.ch
 # Editor.....: Stefan Oehrli
-# Date.......: 2026.10.08
-# Version....: v0.5.0
+# Date.......: 2026.10.09
+# Version....: v0.6.0
 # Purpose....: Pre-flight connectivity check for Oracle AutoUpgrade.
 #              Validates that all required Oracle endpoints are reachable
 #              through the configured proxy, TLS inspection is detected,
@@ -67,7 +67,9 @@ SCRIPT_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 SCRIPT_BASE="$(dirname "${SCRIPT_BIN_DIR}")"
 export AUTOUPGRADE_BASE="${SCRIPT_BASE}"
 
-AUTOUPGRADE_ENV_FILE="${AUTOUPGRADE_BASE}/etc/autoupgrade.env"
+# AUTOUPGRADE_ENV_FILE is intentionally NOT pre-set here; au_load_config
+# handles ${AUTOUPGRADE_BASE}/etc/autoupgrade.env as level-5 automatically.
+# Users can export AUTOUPGRADE_ENV_FILE to point to a custom env file (level-3).
 JAR_FILE="${AUTOUPGRADE_BASE}/jar/autoupgrade.jar"
 
 # Defaults for CLI options
@@ -126,11 +128,11 @@ AU_PUBLIC_CA_PATTERNS=(
     "thawte, Inc."
     "IdenTrust"
 )
-# Lowercased once (bash 3.2 has no ${var,,}); used by _is_public_ca
+# Lowercased once for the case-insensitive match in _is_public_ca
 AU_PUBLIC_CA_PATTERNS_LC=()
-while IFS= read -r _ca_lc; do
-    AU_PUBLIC_CA_PATTERNS_LC+=("${_ca_lc}")
-done < <(printf '%s\n' "${AU_PUBLIC_CA_PATTERNS[@]}" | tr '[:upper:]' '[:lower:]')
+for _ca in "${AU_PUBLIC_CA_PATTERNS[@]}"; do
+    AU_PUBLIC_CA_PATTERNS_LC+=("${_ca,,}")
+done
 # - EOF Default Values ---------------------------------------------------------
 
 # - Load Library ---------------------------------------------------------------
@@ -139,11 +141,13 @@ done < <(printf '%s\n' "${AU_PUBLIC_CA_PATTERNS[@]}" | tr '[:upper:]' '[:lower:]
 # - EOF Load Library -----------------------------------------------------------
 
 # - Site Settings --------------------------------------------------------------
-au_source_env_file "${AUTOUPGRADE_ENV_FILE}"
+# au_load_config handles all 7 precedence levels including
+# ${AUTOUPGRADE_BASE}/etc/autoupgrade.env (level-5).
+au_load_config
 # - EOF Site Settings ----------------------------------------------------------
 
 # EXIT trap: remove temp PEM bundle
-trap 'rm -f "${TRUSTSTORE_PEM:-}"' EXIT
+trap 'rm -f "${TRUSTSTORE_PEM:-}"; if declare -F _au_purge_tmpfiles >/dev/null; then _au_purge_tmpfiles; fi' EXIT
 
 # - Functions ------------------------------------------------------------------
 
@@ -230,7 +234,7 @@ _is_public_ca() {
         field="${field%"${field##*[![:space:]]}"}"
         [[ "${field}" == O=* ]] || continue
         org="${field#O=}"
-        org_lc="$(printf '%s' "${org}" | tr '[:upper:]' '[:lower:]')"
+        org_lc="${org,,}"
         matched=false
         for pattern_lc in "${AU_PUBLIC_CA_PATTERNS_LC[@]}"; do
             [[ "${org_lc}" == "${pattern_lc}" ]] && matched=true && break
@@ -259,6 +263,7 @@ au_build_truststore_pem() {
     fi
 
     TRUSTSTORE_PEM="$(mktemp "${TMPDIR:-/tmp}/au_ts_pem_XXXXXX")"
+    _AU_TMPFILES+=("${TRUSTSTORE_PEM}")
 
     local _keytool_rc=0
     export AUTOUPGRADE_TRUSTSTORE_PASS="${AUTOUPGRADE_TRUSTSTORE_PASS:-changeit}"
@@ -438,9 +443,7 @@ au_check_jar() {
         return 0
     fi
     local version file_date
-    version=$(unzip -p "${JAR_FILE}" META-INF/MANIFEST.MF 2>/dev/null \
-        | grep -i 'Implementation-Version' \
-        | cut -d: -f2 | tr -d ' \r\n') || true
+    version="$(au_jar_version "${JAR_FILE}")"
     version="${version:-unknown}"
     file_date=$(stat -c '%y' "${JAR_FILE}" 2>/dev/null | cut -d' ' -f1) \
         || file_date=$(stat -f '%Sm' -t '%Y-%m-%d' "${JAR_FILE}" 2>/dev/null) \

@@ -671,7 +671,7 @@ CURLEOF2
 }
 
 @test "_is_public_ca: O= anchored, commas inside values, every O= checked" {
-    run bash -c "source <(sed -n '/^AU_PUBLIC_CA_PATTERNS=/,/^done < <(printf/p;/^_is_public_ca()/,/^}/p' '${REPO_ROOT}/bin/au_check_connectivity.sh'); \
+    run bash -c "source <(sed -n '/^AU_PUBLIC_CA_PATTERNS=/,/^done$/p;/^_is_public_ca()/,/^}/p' '${REPO_ROOT}/bin/au_check_connectivity.sh'); \
         _is_public_ca 'C=US; O=Entrust, Inc.; CN=Entrust Certification Authority - L1K' && echo entrust=ok; \
         _is_public_ca 'CN=fakeO=DigiCert Inc; O=Contoso' || echo fake=rejected; \
         _is_public_ca 'C=US; O=DigiCert Inc; CN=DigiCert Global G2 TLS RSA SHA256 2020 CA1' && echo digicert=ok"

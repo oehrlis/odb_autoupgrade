@@ -4,9 +4,32 @@
 
 ### Added
 
+- `lib/common.sh` (port of the odb_datasafe library), `lib/au_env.sh`, `lib/au_net.sh`, `lib/au_tools.sh`;
+  `lib/au_lib.sh` is now the loader
+- `bin/template.sh` - script template for new tools
+- `etc/au_patch.cfg` - one template for download, create_home and deploy; empty values are dropped and named,
+  mandatory values are checked per mode, `global.keystore` is rendered for download only
+- Configuration precedence: caller > `AUTOUPGRADE_ENV_FILE` > `${ORADBA_CONFIG_DIR}/autoupgrade.env` >
+  `etc/autoupgrade.env` > pin file > defaults; every loaded or refused file is named
+- `au_run.sh` prints the `VDGI_*` / `GOLD_IMAGE` lines of the patching log after a download
 - `doc/design.md` - Phase 2 design: inventory legacy vs target, target architecture, configuration precedence,
   gold image paths, patch profiles, one template `au_patch.cfg` for all modes, edition and OS groups,
   cross-repository ownership, field findings mapping, work packages and decisions
+
+### Changed
+
+- bash 4.2 or later is required (Oracle Linux 8/9; Homebrew bash on macOS)
+- The 0.5.0 templates `au_download.cfg`, `au_create_home.cfg`, `au_deploy.cfg` print a deprecation warning
+- Env files are refused when their directory is group or world writable - run `chmod go-w` on `etc/` and the
+  site configuration directory
+
+### Security
+
+- Env files are opened once and checked on the open file (owner by numeric uid, mode, parent directories
+  including every symlink hop), then sourced from that file descriptor
+- Higher configuration levels are chosen from the caller environment only, never by a lower-level file
+- Readonly conflicts, template lines without `=`, duplicate `-mode` and missing `envsubst` abort with a message;
+  renderer temp files are removed on every exit
 
 ## 0.5.0 - 2026-10-08
 
