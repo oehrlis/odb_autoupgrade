@@ -20,6 +20,8 @@ setup() {
     # Scratch dir per test
     WORK_DIR="${BATS_TMPDIR}/au_test_$$_${RANDOM}"
     mkdir -p "${WORK_DIR}/bin" "${WORK_DIR}/jar" "${WORK_DIR}/etc"
+    # Ensure directories are not group/world-writable (security check compliance)
+    chmod 700 "${WORK_DIR}" "${WORK_DIR}/bin" "${WORK_DIR}/jar" "${WORK_DIR}/etc"
 
     # Ensure a placeholder jar exists at the real repo location for integration
     # tests (AUTOUPGRADE_BASE is always derived from the script's own directory).
@@ -182,9 +184,10 @@ make_fake_jar() {
 
 @test "au_convert_no_proxy: CIDR entry is skipped with warning" {
     source "${LIB_NET}"
-    result="$(au_convert_no_proxy "10.0.0.0/8,.example.com" 2>/tmp/au_warn.txt)"
+    local _warn_file="${BATS_TEST_TMPDIR}/au_warn.txt"
+    result="$(au_convert_no_proxy "10.0.0.0/8,.example.com" 2>"${_warn_file}")"
     [[ "${result}" == "*.example.com" ]]
-    grep -q "CIDR" /tmp/au_warn.txt
+    grep -q "CIDR" "${_warn_file}"
 }
 
 @test "au_convert_no_proxy: whitespace inside entries is stripped" {
@@ -732,16 +735,20 @@ EOF
     [[ "${output}" == "none" ]]
 }
 
-@test "au_source_env_file: symlink env file -> exit 1" {
+@test "au_source_env_file: symlink to safe file is resolved and sourced (Decision-5)" {
+    # S2: au_source_env_file now uses Decision-5; symlinks are resolved, not refused.
+    # (Changed from 0.5.0 which refused symlinks with exit 1.)
     printf 'AUTOUPGRADE_PROXY=http://proxy:3128\n' > "${WORK_DIR}/real.env"
     chmod 600 "${WORK_DIR}/real.env"
     ln -s "${WORK_DIR}/real.env" "${WORK_DIR}/link.env"
     run bash -c "
+        unset AUTOUPGRADE_PROXY
         source '${LIB_NET}'
-        au_source_env_file '${WORK_DIR}/link.env' 2>&1
+        au_source_env_file '${WORK_DIR}/link.env' 2>/dev/null
+        echo \"\${AUTOUPGRADE_PROXY}\"
     "
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"symlink"* ]]
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"http://proxy:3128"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -1040,4 +1047,20 @@ EOF
         --workdir '${WORK_DIR}/ks' --cfg /nonexistent.cfg </dev/null 2>&1"
     [[ "${output}" != *"MOS password not set"* ]]
     [[ "${output}" != *"Keystore password not set"* ]]
+}
+
+@test "au_run.sh: renderer abort leaves no au_render temp file (script EXIT trap purges)" {
+    make_mock_java 11
+    local tdir="${BATS_TEST_TMPDIR}/tmp"
+    mkdir -p "${tdir}"
+    chmod 700 "${tdir}"
+    printf 'global.global_log_dir=${AU_LOG_DIR}\nbroken_line_without_equals\n' > "${WORK_DIR}/broken.cfg"
+    chmod 600 "${WORK_DIR}/broken.cfg"
+    run bash -c "TMPDIR='${tdir}' AUTOUPGRADE_JAVA_HOME='${WORK_DIR}' \
+        AUTOUPGRADE_TRUSTSTORE_CANDIDATES='/nonexistent' \
+        bash '${SCRIPT}' -config '${WORK_DIR}/broken.cfg' -patch -mode download 2>&1"
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"line"* ]]
+    run bash -c "ls '${tdir}' | grep -c au_render || true"
+    [ "${output}" = "0" ]
 }
