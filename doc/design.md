@@ -1,7 +1,8 @@
 # odb_autoupgrade - Phase 2 Design
 
-Status: approved 2026-10-09 (Phase 2, consolidation and refactor). Scope of this document is design only - no
-code changes are part of it.
+Status: approved 2026-10-09 (Phase 2, consolidation and refactor); revised 2026-10-09 (patch profiles, one template
+for all modes, edition and groups, cross-repository ownership - see [Revision 2026-10-09](#revision-2026-10-09)).
+Scope of this document is design only - no code changes are part of it.
 
 Evidence conventions used below:
 
@@ -31,7 +32,10 @@ Functional scope:
   on RHEL/OL 9
 - Out-of-place patching of databases (`-mode analyze|deploy`)
 - Pre-flight checks (endpoints, TLS inspection, keystore, JAR version)
-- Later (Phase 3): Ansible roles and playbooks for regular RU / MRP / CSPU patching on top of these scripts
+- Patch profiles: named patch selections (current recommendation, pinned releases, CPU-test sets) shared by
+  download, create_home and deploy
+- Not in this repository: Ansible roles and playbooks for regular RU / MRP / CSPU patching. They live in
+  `oradba-ansible` and call these scripts (see [Cross-repository ownership](#cross-repository-ownership))
 
 Out of scope: database upgrades (AutoUpgrade upgrade mode), Grid Infrastructure patching, Windows.
 
@@ -88,7 +92,7 @@ The target already carries 1:1 copies of several legacy files (marked "copied in
 | `bin/extension_tool.sh` | drop | extension-template example, no function |
 | `lib/common.sh` | replace | template stub; replaced by the port of `odb_datasafe/lib/common.sh` (WP1) |
 | `lib/au_lib.sh` | split | becomes the loader plus AutoUpgrade modules (WP1) |
-| `etc/au_download.cfg`, `etc/au_create_home.cfg`, `etc/au_deploy.cfg` | keep | generic templates from 0.5.0 |
+| `etc/au_download.cfg`, `etc/au_create_home.cfg`, `etc/au_deploy.cfg` | keep, deprecated | generic templates from 0.5.0; deprecated aliases of `etc/au_patch.cfg` until 1.0 (revision 2026-10-09) |
 | `etc/autoupgrade.env.example`, `etc/odb_autoupgrade.conf.example`, `etc/env.sh`, `etc/aliases.sh` | update | precedence text, new variables |
 | `scripts/build.sh`, `scripts/rename-extension.sh` | keep | same as `odb_datasafe` |
 | `tests/*.bats` | restructure | `lib_*` / `script_*` / `integration_*` layout (see testing) |
@@ -112,6 +116,10 @@ Requirements are Phase 2 items 2-5 and the configuration precedence section of t
 | Self-built gold image (`runInstaller -createGoldImage`) and distribution | - | script and doc | WP10 |
 | Gold image install on RHEL/OL 9 without 19.3 base; naming convention | `au_create_home.cfg` uses a gold image in the folder | no-source-home config generator (F10), manual silent-install fallback, naming convention | WP9, WP10 |
 | Configuration precedence, standalone + OraDBA, `AUTOUPGRADE_*` compatible, `.extension` hooks | caller env > `etc/autoupgrade.env` > pin file > defaults; `AUTOUPGRADE_ENV_FILE` hard-coded | no explicit env file override, no OraDBA site level, per-file snapshot breaks multi-file precedence | WP2 |
+| Current recommendation and defined releases, prior RU / MRP / CSPU for CPU tests (revision 2026-10-09) | one `AU_PATCH` per run, one shared download folder | no named selections, no reproducible MRP level, no CSPU rules | WP13 |
+| One config for download, create_home and deploy | three templates; optional keys impossible because unset variables abort | one template with empty-line dropping and per-mode checks | WP14 |
+| Edition SE2 possible, default EE; OS groups configurable | edition and groups only through hand-written configs | `AU_EDITION`, `AU_GROUP_*` with defaults and derivation rules | WP15 |
+| Runs without OraDBA, restrictions documented | standalone-first code | feature matrix in the README | WP16 |
 <!-- markdownlint-restore -->
 
 ## Target architecture
@@ -140,7 +148,10 @@ lib/
   au_net.sh                 Java resolution, proxy, truststore, curl wrapper
   au_tools.sh               JAR manifest, keystore helpers, patches_info.json, log scan
 etc/
-  au_download.cfg  au_create_home.cfg  au_create_home_nosource.cfg  au_deploy.cfg  au_keystore.cfg
+  au_patch.cfg  au_keystore.cfg   one template for download / create_home / deploy, keystore console
+  au_download.cfg  au_create_home.cfg  au_deploy.cfg   deprecated aliases (until 1.0)
+  profiles/   recommended.profile  19.32.profile  cputest-example.profile  21c-cspu.profile
+  groups/os-fixed-gid.env   example site group profile
   autoupgrade.env.example  odb_autoupgrade.conf.example  env.sh  aliases.sh
 jar/README.md  patches/README.md  doc/  tests/  scripts/  .github/workflows/
 ```
@@ -206,28 +217,199 @@ it) and becomes the loader.
 
 ### Configuration templates
 
-- `au_download.cfg`, `au_create_home.cfg`, `au_deploy.cfg` stay as in 0.5.0 (variables only, one `AU_PATCH`).
-- New `au_create_home_nosource.cfg` for hosts without an installed source home (new RHEL/OL 9 host): adds
-  `platform`, `target_version`, `home_settings.oracle_base`, `home_settings.edition`,
-  `home_settings.inventory_location`, `home_settings.inventory_group` and the six `home_settings.os*_group` keys
-  (AU facts 9 and 10: exact key names, required when `source_home` is absent). A separate template is needed because
-  the envsubst guard aborts on unset variables, so optional keys cannot live in the source-home template.
+Revised 2026-10-09: one template for all modes replaces the three 0.5.0 templates and the planned no-source-home
+template.
+
+- `etc/au_patch.cfg` serves download, create_home and deploy. Evidence (AU facts 13 Q5): no key of the set below is
+  rejected in a mode that does not use it; download rejects a `source_home` that does not exist; create_home accepts an
+  empty or missing keystore directory; deploy requires `sid`, `source_home` and `target_home` (AU facts 12 Q4).
+- `au_download.cfg`, `au_create_home.cfg`, `au_deploy.cfg` stay unchanged as deprecated aliases until 1.0, because
+  0.5.0 installations use them. `au_run.sh` prints a deprecation WARN that names `au_patch.cfg` when one of them is
+  used.
+- The `au_create_home_nosource.cfg` planned before the revision is not created. It was only needed because the envsubst
+  guard aborts on unset variables; dropping empty lines removes that reason.
 - New `au_keystore.cfg` with only `global.global_log_dir` and `global.keystore` (keystore must not equal
   `global_log_dir`, AU facts 5) - replaces `etc/test.cfg` as the console config.
 
+Keys of `au_patch.cfg` (key names: AU facts 9, 10, 11):
+
+<!-- markdownlint-disable MD013 MD060 -->
+| Key | Variable | Default |
+| --- | --- | --- |
+| `global.global_log_dir` | `AU_LOG_DIR` | below `AUTOUPGRADE_BASE` (0.5.0) |
+| `global.keystore` | `AU_KEYSTORE` | below `AUTOUPGRADE_BASE`; rendered for `-mode download` only |
+| `patch1.platform` | `AU_PLATFORM` | `LINUX.X64` (0.5.0) or profile |
+| `patch1.target_version` | `AU_TARGET_VERSION` | `19` (0.5.0) or profile |
+| `patch1.download_folder` | `AU_DOWNLOAD_FOLDER` | `patches/<profile>`, without profile `patches/` |
+| `patch1.patch` | `AU_PATCH` | pin file, profile, else `RECOMMENDED` |
+| `patch1.gold_image` | `AU_GOLD_IMAGE` | profile, else `NO` |
+| `patch1.source_home`, `patch1.target_home`, `patch1.sid` | `AU_SOURCE_HOME`, `AU_TARGET_HOME`, `AU_SID` | empty |
+| `patch1.home_settings.edition` | `AU_EDITION` | see [Edition and OS groups](#edition-and-os-groups) |
+| `patch1.home_settings.os*_group` (six keys) | `AU_GROUP_*` | see [Edition and OS groups](#edition-and-os-groups) |
+| `patch1.home_settings.oracle_base` | `AU_ORACLE_BASE` | empty (derived from the source home) |
+| `patch1.home_settings.inventory_location`, `inventory_group` | `AU_INVENTORY_LOCATION`, `AU_INVENTORY_GROUP` | empty (AutoUpgrade reads `/etc/oraInst.loc`) |
+<!-- markdownlint-restore -->
+
+Rendering (`au_render_cfg`):
+
+- Only variables referenced in the cfg are substituted (0.5.0). Variables of the optional set (all of the table except
+  `AU_LOG_DIR`, `AU_DOWNLOAD_FOLDER`, `AU_PATCH`) default to empty. A line whose value is empty after expansion is
+  dropped, and every dropped key is named in the output with its variable - no silent filter. An unset variable outside
+  the optional set still aborts the run. `--dry-run` prints the rendered config and the dropped keys.
+- `au_run.sh` reads the value after `-mode` from the pass-through arguments for the checks below; it neither changes
+  nor consumes AutoUpgrade arguments (see CLI conventions).
+- `global.keystore` is rendered only for `-mode download` and named as dropped otherwise. This keeps the keystore rule
+  "create_home and deploy configs carry no `global.keystore`" (a copied auto-login keystore fails with TDE104 even in
+  create_home, AU facts 5, 9).
+
+Per-mode checks by the wrapper, before AutoUpgrade starts (each failure names the missing variable):
+
+<!-- markdownlint-disable MD013 MD060 -->
+| Mode | Mandatory | Evidence |
+| --- | --- | --- |
+| download | `AU_PATCH`; a set `AU_SOURCE_HOME` must exist | AU facts 13 Q5 (non-existing `source_home` rejected) |
+| create_home | `AU_TARGET_HOME` (absent or empty directory) plus either `AU_SOURCE_HOME`, or edition, groups, `AU_ORACLE_BASE`, inventory (`/etc/oraInst.loc` or both `AU_INVENTORY_*`) and a target version (`RU:x.y` in `AU_PATCH` or `AU_TARGET_VERSION`) | AU facts 4 (`THL_NO_TARGET_HOME`, `THL_MUST_NOT_EXIST`, `IS_EDITION_FAIL`, `CDBV_NO_TARGET_BASE`, `IS_INVENTORY_FAIL`, `DCV_NO_TARGET_VERSION`) |
+| deploy | `AU_SID`, `AU_SOURCE_HOME`, `AU_TARGET_HOME` | AU facts 12 Q4 |
+| other modes | no wrapper check; AutoUpgrade validates | - |
+<!-- markdownlint-restore -->
+
+`gold_image` is set per profile: create_home with `gold_image=YES` fails when the folder holds no gold image
+(`APPLY_RU_NO_GOLD_IMAGE_MATCH`, AU facts 13 Q5), so profiles that ship zips use `NO` and gold image profiles use `YES`.
+
+### Patch profiles
+
+A patch profile is a named patch selection that download, create_home and deploy share. Added by the revision of
+2026-10-09.
+
+Format - a small `KEY=VALUE` file, parsed with an allow-list like the pin file, never sourced:
+
+```bash
+# etc/profiles/19.32.profile - pinned example
+AU_PROFILE_DESC="RU 19.32 with OPatch, OJVM, Data Pump bundle and the latest MRP at download time"
+AU_PATCH=RU:19.32,OPATCH,OJVM:19.32,DPBP,MRP
+AU_TARGET_VERSION=19
+AU_PLATFORM=LINUX.X64
+AU_GOLD_IMAGE=NO
+```
+
+- Allowed keys: `AU_PROFILE_DESC`, `AU_PATCH`, `AU_TARGET_VERSION`, `AU_PLATFORM`, `AU_GOLD_IMAGE`, optional
+  `AU_EDITION`. An unknown key is fatal. Values are literal (no expansion); `AU_PATCH` uses the pin file pattern,
+  `AU_GOLD_IMAGE` is `YES|NO|AUTO|ALL` (AU facts 3), `AU_EDITION` is `EE|SE2` (AU facts 13 Q4). File checks as for
+  env files (decision 5).
+- Selection: `au_run.sh --profile <name|path> -config etc/au_patch.cfg -patch -mode <mode>`. A value with a `/` is a
+  path; a name resolves to `<dir>/<name>.profile`.
+- Search path, first match wins: explicit path > `AU_PROFILE_DIR` > `${ORADBA_CONFIG_DIR}/autoupgrade/profiles`
+  (OraDBA mode) > `etc/profiles/` (shipped). A name found in more than one directory is reported with every shadowed
+  file; a missing profile is an ERROR that lists every directory searched.
+- Precedence: level 2a (see [Resolution order](#resolution-order)) - the profile beats env files, the caller
+  environment beats the profile (decision 3). For `AU_PATCH` the pin file in the profile's download folder wins over
+  the profile value, because it is the resolved form of that value; `au_patch_pin.sh` refuses (WARN, `--force`) a pin
+  that is not a versioned form of the profile value. Open question Q13 (revision 2026-10-09).
+
+Keyword rules the profile check applies before the run (AutoUpgrade stays the authority; the check only fails earlier
+with the same message key):
+
+- `RU:x.y` and `OJVM:x.y` are versionable; the OJVM version must match the RU (`VCP_INVALID_RU_OJVM_MISMATCH`).
+  `MRP`, `DPBP` and `CSPU` take no version (`PATCH_FORMAT_FAIL`); plain patch numbers are accepted (AU facts 13 Q1, Q2).
+- `RECOMMENDED` together with a versioned `RU:x.y` is rejected (AU facts 2); use `RECOMMENDED:<x.y>` or an explicit
+  list.
+- `CSPU` is fatal on Linux for 19c and 23 (`VCP_CSPU_UNSUPPORTED_ON_LINUX`); it is valid for 19c and 23 on non-Linux
+  platforms and for 21c on all platforms. On 21c `MRP`, `OJVM` and `DPBP` are not supported (`VCP_MRP_UNSUPPORTED_ON_21`,
+  `VCP_INVALID_PATCH_APPLY`; AU facts 13 Q2). MRP is Linux only and exists for 19c from RU 19.17 (AU facts 2).
+- Several prefixes per cfg are accepted (AU facts 13 Q6), but a profile describes exactly one prefix (`patch1`).
+
+Shipped profiles (`etc/profiles/`):
+
+<!-- markdownlint-disable MD013 MD060 -->
+| Profile | `AU_PATCH` | Purpose |
+| --- | --- | --- |
+| `recommended` | `RECOMMENDED` | current recommendation; pinned to `RECOMMENDED:<x.y>` after the download |
+| `19.32` | `RU:19.32,OPATCH,OJVM:19.32,DPBP,MRP` | pinned release example |
+| `cputest-example` | `RU:19.32,OPATCH,OJVM:19.32,DPBP,<MRP patch number>` | reproducible CPU-test example; the placeholder must be replaced before use |
+| `21c-cspu` | `RU:21.<n>,OPATCH,CSPU` with `AU_TARGET_VERSION=21` | the CSPU case that is valid on Linux (form validated with `RU:21.3,OPATCH,CSPU`, AU facts 13 Q2) |
+<!-- markdownlint-restore -->
+
+Download folder per profile:
+
+- With a profile `AU_DOWNLOAD_FOLDER` defaults to `${AUTOUPGRADE_BASE}/patches/<profile>` (profile name = file name
+  without `.profile`); without a profile it stays `patches/` (0.5.0). An explicit `AU_DOWNLOAD_FOLDER` wins.
+- Reason: an unversioned `RECOMMENDED` in create_home picks the newest RU in the folder (AU facts 12 Q1), and one
+  folder holds one `patches_info.json` and one pin file. A versioned RU picks exactly its own version from a shared
+  folder (AU facts 13 Q6, not yet observed with real zips), but quarters never mix with one folder per profile, and
+  the pin file lives next to the zips it describes.
+
+Reproducibility:
+
+- `MRP` without a number means "latest MRP for that RU at download time"; the service resolves it, there is no client
+  selector for a month (AU facts 13 Q1).
+- CPU-test profiles therefore pin the MRP by patch number. `au_patch_pin.sh --resolve-mrp` writes the resolved
+  numbers from `patches_info.json` into the pin file after the download (JSON field mapping UNVERIFIED, AU facts 12 Q2).
+- Plain patch numbers are not covered by an Oracle gold image and are downloaded separately (AU facts 13 Q3). A pinned
+  MRP together with `AU_GOLD_IMAGE=YES` therefore yields an image plus a separate MRP zip; how create_home combines
+  them is UNVERIFIED and part of the WP13 lab test.
+
+Monthly CPU-test catalogue: the profile **format** belongs to this repository, the monthly profile **content** does
+not. It is maintained in a private test catalogue repository and consumed through `AU_PROFILE_DIR`; there is no
+monthly odb_autoupgrade release for data.
+
+### Edition and OS groups
+
+Added by the revision of 2026-10-09.
+
+Edition (`AU_EDITION`, key `patch1.home_settings.edition`, values `EE|SE2`, `DB_EDITION_FAIL`; AU facts 13 Q4):
+
+- unset and `AU_SOURCE_HOME` set: the line is dropped, AutoUpgrade derives the edition from the source home
+- unset and no source home: the wrapper sets `EE`. AutoUpgrade itself has no default and fails with
+  `IS_EDITION_FAIL`
+- set (profile, site env file or caller environment on the command line, e.g. `SE2`): rendered, overrides the derived
+  value
+- Whether an Oracle gold image installs as SE2 is UNVERIFIED (AU facts 13 Q4); WP15 tests it in the lab.
+
+OS groups:
+
+<!-- markdownlint-disable MD013 MD060 -->
+| Variable | Key (`patch1.home_settings.`) | Default without source home |
+| --- | --- | --- |
+| `AU_GROUP_OSDBA` | `osdba_group` | `dba` |
+| `AU_GROUP_OSOPER` | `osoper_group` | `oper` |
+| `AU_GROUP_OSBACKUPDBA` | `osbackupdba_group` | `backupdba` |
+| `AU_GROUP_OSDGDBA` | `osdgdba_group` | `dgdba` |
+| `AU_GROUP_OSKMDBA` | `oskmdba_group` | `kmdba` |
+| `AU_GROUP_OSRACDBA` | `osracdba_group` | `racdba` |
+<!-- markdownlint-restore -->
+
+- With a source home, unset `AU_GROUP_*` lines are dropped and AutoUpgrade derives the groups from
+  `<source_home>/rdbms/lib/config.c` (AU facts 11); a set variable overrides the derived group.
+- Without a source home the defaults above are rendered. AutoUpgrade alone would only default the OSDBA group to `dba`
+  (`IS_DEFAULT_GROUP_DBA_FAIL`, AU facts 4); rendering all six makes the result explicit. The groups must exist and
+  the current user must be a member (`IS_*_GROUP_FAIL`); the wrapper checks this with `id -nG` before the run.
+- The defaults are the names of the Oracle Database Preinstallation RPM
+  ([21c installation guide](https://docs.oracle.com/en/database/oracle/oracle-database/21/ladbi/Chunk1188564904.html)
+  lists `dba`, `oper`, `backupdba`, `dgdba`, `kmdba`, `racdba`). The
+  [19c guide](https://docs.oracle.com/en/database/oracle/oracle-database/19/ladbi/overview-of-oracle-linux-configuration-with-oracle-rpms.html)
+  names only `oinstall` and `dba`; WP15 confirms the group list of the 19c RPM.
+- The `os*` names with fixed GIDs are a site choice, not a default. They ship only as the example
+  `etc/groups/os-fixed-gid.env` (`AU_GROUP_*=osdba` ... `osracdba`, GIDs documented as comments). A site copies the
+  lines into its `autoupgrade.env`. The engine never reads GIDs; they matter only for the role that creates the groups
+  (`oradba-ansible`) and for the conventions page in `oradba`.
+- The inventory group (`oinstall`) is not part of `AU_GROUP_*`; it comes from `/etc/oraInst.loc` or
+  `AU_INVENTORY_GROUP`.
+
 ### Config generator (F10)
 
-`au_gen_config.sh` renders a static, per-host config that needs no further envsubst.
+`au_gen_config.sh` renders a static, per-host config from `etc/au_patch.cfg` with the same renderer as `au_run.sh`
+(revision 2026-10-09), so the result needs no further envsubst.
 
-- **With a source home** AutoUpgrade derives OS groups from `<source_home>/rdbms/lib/config.c`
-  (`ParseConfigC`, regex `#define %s "(\w*)"`), ORACLE_BASE from `bin/orabase`, the edition and the binary options
-  natively (AU facts 11). The generator then only fills `sid`, homes and folder; it does not duplicate what
-  AutoUpgrade derives, and it warns when the current user is not in a derived group (`IS_SOURCE_OH_GROUP_FAIL`).
+- **With a source home** AutoUpgrade derives OS groups from `<source_home>/rdbms/lib/config.c`, ORACLE_BASE from
+  `bin/orabase`, the edition and the binary options natively (AU facts 11). The generator then only fills `sid`, homes
+  and folder; it does not duplicate what AutoUpgrade derives, and it warns when the current user is not in a derived
+  group (`IS_SOURCE_OH_GROUP_FAIL`).
 - **Without a source home** (`--groups-from <config.c|home>` or `--groups-standard`):
   - reads `SS_DBA_GRP`, `SS_OPER_GRP`, `SS_BKP_GRP`, `SS_DGD_GRP`, `SS_KMT_GRP`, `SS_RAC_GRP` from a `config.c` of a
     reference home (copied file or local home) and maps them to `home_settings.osdba_group`, `osoper_group`,
     `osbackupdba_group`, `osdgdba_group`, `oskmdba_group`, `osracdba_group`
-  - `--groups-standard` uses the standard group names from F11 (Phase 3 defines them)
+  - `--groups-standard` uses the `AU_GROUP_*` values (default: preinstall names, see
+    [Edition and OS groups](#edition-and-os-groups))
   - inventory from `/etc/oraInst.loc` (`inventory_loc`, `inst_group`), else from options
   - checks with `id -nG` that the current user is member of every group (fails early instead of in `IS_*`)
   - binary options: optional `--binopt-from <libknlopt listing|home>` sets `home_settings.binopt.*` (AU facts 10)
@@ -248,6 +430,8 @@ list must therefore be pinned once, right after the download.
   - an existing pin with a different value is never overwritten silently: WARN with both values, `--force` replaces
   - version mapping: `19.28.0.0.0` -> `19.28`; for 23ai/26ai versions with a third component (`23.26.1.0.0` ->
     `23.26.1`) the mapping follows the `TYPE:NN.N[.N]` form (AU facts 2) - UNVERIFIED by a run
+- With a profile the download folder, and therefore the pin file, is per profile; pinning the MRP by patch number is
+  described under [Patch profiles](#patch-profiles).
 - Pin file `${AU_DOWNLOAD_FOLDER}/au_patch.env` stays a **parsed** file (single `AU_PATCH=` line, value pattern
   `^[A-Za-z0-9_.,:-]+$`, owner and permission checks) and is never sourced - it travels with transferred folders and
   is untrusted input (Phase 1 security finding).
@@ -366,9 +550,9 @@ automated path has a manual fallback.
 
 ### Oracle-provided gold image (Oracle Update Advisor)
 
-- Download host config: `au_download.cfg` with `AU_GOLD_IMAGE=YES` (parameter `gold_image`, values `YES|NO|AUTO|ALL`,
-  default AUTO; AU facts 3). Not to be confused with the patch keyword `GOLDIMAGE:<file>.zip`, which is exclusive and
-  not allowed in download mode (AU facts 2).
+- Download host config: `au_patch.cfg` with a profile that sets `AU_GOLD_IMAGE=YES` (0.5.0: `au_download.cfg`; parameter
+  `gold_image`, values `YES|NO|AUTO|ALL`, default AUTO; AU facts 3). Not to be confused with the patch keyword
+  `GOLDIMAGE:<file>.zip`, which is exclusive and not allowed in download mode (AU facts 2).
 - Requirements, in the order AutoUpgrade checks them (AU facts 3, 11): RU in the patch list (`RECOMMENDED` satisfies it,
   AU facts 12 Q3); target release 19, or 23+ with `gold_image.security_patch_level`; MOS username/password in the
   keystore (not device flow); key pair `PKEY1`/`PKEY2`; OUA connection (`transport.oracle.com`, plus the object storage
@@ -401,10 +585,10 @@ Used when the Update Advisor is not reachable from any host, or when a site want
 
 ### Install on RHEL/OL 9
 
-- Primary: `au_create_home_nosource.cfg` (or the source-home template on hosts that already have a 19c home) with the
-  gold image in `download_folder`. create_home extracts a matching gold image automatically (stage EXTRACT,
-  "Extracting Gold Image"); no match gives `APPLY_RU_NO_GOLD_IMAGE_MATCH` (AU facts 9). create_home never downloads and
-  needs no keystore (AU facts 9).
+- Primary: `au_patch.cfg` in create_home mode (without `AU_SOURCE_HOME` on a new host, with it on hosts that already
+  have a 19c home) and a gold image profile (`AU_GOLD_IMAGE=YES`), with the gold image in `download_folder`. create_home
+  extracts a matching gold image automatically (stage EXTRACT, "Extracting Gold Image"); no match gives
+  `APPLY_RU_NO_GOLD_IMAGE_MATCH` (AU facts 9). create_home never downloads and needs no keystore (AU facts 9).
 - Manual fallback (`au_goldimage.sh --install`, prints and optionally runs the non-root steps): verify the checksum,
   unzip into the empty target home, run `runInstaller -silent` software-only with response parameters for
   `ORACLE_BASE`, inventory, edition and OS groups (values from `au_gen_config.sh`), then show the `root.sh` command for
@@ -432,10 +616,11 @@ logged at DEBUG (like `_DATASAFE_CONF_FILES` in `odb_datasafe`).
 | --- | --- | --- | --- |
 | 1 | CLI options of the `au_*` script | yes | yes |
 | 2 | caller environment | shell, cron, Ansible `environment:` | as standalone, plus variables exported at login from `${ORADBA_CONFIG_DIR}/oradba_customer.conf` and by the `etc/env.sh` hook |
+| 2a | patch profile selected with `--profile` (parsed, allow-listed keys only; revision 2026-10-09) | yes | yes, also from `${ORADBA_CONFIG_DIR}/autoupgrade/profiles` |
 | 3 | explicit env file `AUTOUPGRADE_ENV_FILE` (if set; missing file = ERROR) | yes | yes |
 | 4 | OraDBA site config `${ORADBA_CONFIG_DIR}/autoupgrade.env` (`ORADBA_ETC` as fallback alias) | skipped | yes, if the variable is set |
 | 5 | extension file `${AUTOUPGRADE_BASE}/etc/autoupgrade.env` | yes | yes |
-| 6 | pin file `${AU_DOWNLOAD_FOLDER}/au_patch.env` (only `AU_PATCH`, parsed) | yes | yes |
+| 6 | pin file `${AU_DOWNLOAD_FOLDER}/au_patch.env` (only `AU_PATCH`, parsed); with a profile it wins over the profile value (level 2a) | yes | yes |
 | 7 | built-in defaults (`au_set_defaults`) | yes | yes |
 <!-- markdownlint-restore -->
 
@@ -459,11 +644,13 @@ Notes on the names:
 1. Parse CLI options into local variables (not yet applied).
 2. Take **one** snapshot of the caller environment (names and values, without `eval`, as in 0.5.0).
 3. Source levels 5, 4, 3 in this order (lowest first) with `set -a`, each after the file checks below.
-4. Restore the snapshot - caller values win over all files. One snapshot for all files is required: the 0.5.0
-   per-file snapshot would let an earlier file win over a later one.
-5. Apply defaults for all variables except `AU_PATCH`, so `AU_DOWNLOAD_FOLDER` is known.
-6. Read the pin file for `AU_PATCH` if it is still unset; else default `RECOMMENDED`.
-7. Apply CLI values.
+4. Apply the parsed profile (level 2a, if selected); its values replace values from files.
+5. Restore the snapshot - caller values win over all files and the profile. One snapshot for all files is required:
+   the 0.5.0 per-file snapshot would let an earlier file win over a later one.
+6. Apply defaults for all variables except `AU_PATCH`, so `AU_DOWNLOAD_FOLDER` is known (per profile, see
+   [Patch profiles](#patch-profiles)).
+7. Read the pin file for `AU_PATCH` if it is still unset or came from the profile; else default `RECOMMENDED`.
+8. Apply CLI values.
 
 The caller-wins rule differs from `odb_datasafe`, where files are sourced after the script defaults and override the
 caller environment unless they use `: "${VAR:=...}"` (open question 3).
@@ -477,6 +664,8 @@ caller environment unless they use `: "${VAR:=...}"` (open question 3).
   `op read` at the call site.
 - The pin file and every file that travels with a transferred download folder are parsed, never sourced.
 - Config rendering substitutes only variables referenced in the cfg; unset references abort the run (0.5.0 guard).
+  Variables of the optional set default to empty, and their lines are dropped and named (revision 2026-10-09).
+- Patch profiles are parsed with an allow-list, never sourced; an unknown key is fatal.
 
 ### .extension hooks
 
@@ -496,13 +685,77 @@ caller environment unless they use `: "${VAR:=...}"` (open question 3).
 | --- | --- | --- | --- |
 | F7 single patch list for download / create_home / deploy | versioned `RECOMMENDED:<x.y>` accepted, must match RU/OJVM versions (AU facts 2); create_home picks the newest RU in the folder (AU facts 12 Q1); deploy compares patches (`THL_PATCH_MISMATCH`, Q5); gold image in the folder is extracted (AU facts 9) | one `AU_PATCH`, `au_patch_pin.sh` called by `au_run.sh`, pin parsed | 2 (WP7) |
 | F8 keystore not portable, create_home without keystore, `-patch` needed | `YES` = host-bound LSSO, `SHARED` portable, TDE104 on an unreadable wallet even in create_home, `-patch` selects the patching keystore (AU facts 5, 9) | `au_keystore.sh --auto-login`, `--check`; templates without `global.keystore` (0.5.0) | 2 (WP6) |
-| F9 binary options of a gold image home | with `source_home`, stage OPTIONS compares `ar -t libknlopt.a` and relinks with `ins_rdbms.mk` (AU facts 11, read from code); `THL_BINARY_OPTION_MISMATCH` only when deploy reuses an existing target home | `au_home_verify.sh` before deploy; `home_settings.binopt.*` via `au_gen_config.sh` when there is no source home | 2 (WP9), 3 |
+| F9 binary options of a gold image home | with `source_home`, stage OPTIONS compares `ar -t libknlopt.a` and relinks with `ins_rdbms.mk` (AU facts 11, not observed end to end); `THL_BINARY_OPTION_MISMATCH` only when deploy reuses an existing target home | `au_home_verify.sh` before deploy; `home_settings.binopt.*` via `au_gen_config.sh` when there is no source home | 2 (WP9), 3 |
 | F9b one JAR version on all hosts | none | `au_update_jar.sh --from/--sha256`, version in the connectivity check (0.5.0); enforcement in Ansible | 2 (WP5), 3 |
-| F10 OS groups from `config.c` | derived from `source_home` natively (AU facts 11); default `dba` without it | `au_gen_config.sh` for the no-source-home case | 2 (WP9) |
-| F11 standard OS groups with fixed GIDs | none (groups must exist; `IS_*_GROUP_FAIL`) | Ansible role (root tasks, report-only for `oinstall` GID mismatch) | 3 |
+| F10 OS groups from `config.c` | derived from `source_home` natively (AU facts 11); default `dba` without it | `AU_GROUP_*` (lines dropped when a source home exists), `au_gen_config.sh` for the no-source-home case | 2 (WP9, WP15) |
+| F11 standard OS groups with fixed GIDs | none (groups must exist; `IS_*_GROUP_FAIL`) | `AU_GROUP_*` defaults (preinstall names); `os*` names with fixed GIDs only as example group profile; group creation in an `oradba-ansible` role (root tasks, report-only for `oinstall` GID mismatch) | 2 (WP15), 3 |
 | F12 `datapatch_summary.log` not found, stage durations | AutoUpgrade writes `status.json` / `progress.json` (AU facts 10); doubled-path bug UNVERIFIED | Phase 2: capture a real `status.json` in the lab; Phase 3: post-check on `cdb_registry_sqlpatch` / `dba_registry_sqlpatch` per container, stage durations from JSON | 3 |
 | F13 deploy copies `dbs/` and `network/admin` files | patch mode has no keys for this (only `source_tns_admin_dir`, `source_ldap_admin_dir`; AU facts 10); which files are copied is UNVERIFIED | Phase 3: pre-deploy baseline, post-deploy restore of the symlink layout, invalid-object baseline, listener switch after the last DB | 3 |
 <!-- markdownlint-restore -->
+
+Since the revision of 2026-10-09, phase 3 in this table means the `oradba-ansible` collection, not an `ansible/`
+directory in this repository.
+
+## Standalone and OraDBA feature matrix
+
+Added by the revision of 2026-10-09. The engine is standalone-first; OraDBA adds integration, never core function.
+
+<!-- markdownlint-disable MD013 MD060 -->
+| Function | Standalone | With OraDBA |
+| --- | --- | --- |
+| Wrapper, profiles, templates, download, create_home, deploy, pin, verify, keystore, JAR update, log cleanup | yes | yes |
+| Connectivity check, gold image create and install | yes | yes |
+| Site config in `${ORADBA_CONFIG_DIR}` (`autoupgrade.env`, `autoupgrade/profiles`) | no - `AUTOUPGRADE_ENV_FILE`, `etc/autoupgrade.env`, `AU_PROFILE_DIR` | yes |
+| Register a new home in `oradba_homes.conf`, environment switch to the new home | no - printed as manual step | yes |
+| Aliases (`au`), extension hooks, integrity check | no | yes |
+| Logging | own log files | own log files (same, decision 1) |
+<!-- markdownlint-restore -->
+
+The matrix goes into the README (WP16). Every function that is restricted in standalone mode prints the manual step
+instead of skipping silently.
+
+## Cross-repository ownership
+
+Added by the revision of 2026-10-09. The Oracle home and patch automation is spread over several repositories; today
+AutoUpgrade logic exists in five places with four ways to select patches, and group names, GIDs and home naming differ
+between them. The table and the rules below define one owner per concern.
+
+<!-- markdownlint-disable MD013 MD060 -->
+| Repository | Role | Contains | Does not contain |
+| --- | --- | --- | --- |
+| `odb_autoupgrade` | patch and home engine (shell), standalone-first | AutoUpgrade wrapper, templates, profile format and examples, keystore, JAR update, pin, verify, gold image tooling | Ansible, DB creation, monthly profile data |
+| `oradba` | environment and toolbox | env framework, DB lifecycle templates (dbca, sqlnet), homes registry, conventions page | Ansible, AutoUpgrade calls |
+| `oradba-ansible` (new) | the only Ansible code | collection `oradba.automation`: roles and playbooks for OS prerequisites, users and groups, engine install, keystore, download, home create, home switch, DB lifecycle, rollback | shell copies of engine logic, site data |
+| `oci-labs` | lab glue | Terraform, inventory, lab scenarios that call collection playbooks, reports contract | Oracle roles (move to the collection) |
+| `oracle-database-docker-legacy` (private) | image build glue | Dockerfiles, build stages, entrypoint; calls the engine standalone | own `au_*.sh` copies, Ansible |
+| `cpu-patch-tests` (private) | test catalogue and reports | monthly patch profiles, CVE content, reports | engine or role copies |
+| `oradba_init`, `docker` | legacy | frozen; retired after the docker migration | new features |
+<!-- markdownlint-restore -->
+
+Maintenance rules:
+
+1. One owner per concern. Consumers use a released, pinned version (tag plus sha256) and never copy code.
+2. AutoUpgrade is called only by `odb_autoupgrade`. Roles and Dockerfiles call the engine CLI, not `autoupgrade.jar`.
+3. Ansible lives only in `oradba-ansible`. Consumer repositories keep inventories, variables and thin scenario
+   playbooks.
+4. Conventions (group names, GIDs, home naming, `ORACLE_BASE`, data directory, inventory) are defined once on a
+   conventions page in `oradba`; engine and collection implement them as overridable defaults.
+5. Profile format belongs to `odb_autoupgrade`; profile content belongs to the consumer (site, lab, `cpu-patch-tests`).
+6. Shell engines must work without OraDBA and without Ansible; Ansible is an optional layer, never a requirement.
+7. A consumer that needs a change opens an issue in the owner repository; no local patches of vendored code.
+8. Public repositories contain no site data: inventories, profiles with customer values, pre-authenticated URLs and
+   tenancy names stay in private repositories or site configuration.
+
+Consequences for this repository: the engine CLI (`au_*` options and exit codes), the profile format and the
+`au_patch.cfg` variables are the interface for roles and Dockerfiles; changes to them are breaking changes.
+
+Phase 3 of the original project brief (Ansible under `odb_autoupgrade/ansible/`) moves to `oradba-ansible`. This
+repository ships no Ansible code.
+
+The collection layout is designed in `oradba-ansible`. Draft role names, from decomposing the `oci-labs` role
+`db19_engineering`: `os_prereq`, `oracle_user`, `odb_autoupgrade_install`, `autoupgrade_keystore`,
+`autoupgrade_preflight`, `patch_download`, `patch_stage`, `oracle_home_create`, `oracle_home_switch`,
+`oracle_home_rollback`, `db_create`, `oradba_install`.
 
 ## Testing strategy
 
@@ -556,21 +809,35 @@ Following `odb_datasafe/tests`:
 | WP6 | `au_keystore.sh` `--check`, `--resave`, `--backup`; `etc/au_keystore.cfg` | shell-dev, then security-reviewer | WP3 | expect tests with mocked console; backup permissions tested; review signed off |
 | WP7 | `au_patch_pin.sh`, `au_patch_verify.sh`, call from `au_run.sh` after download | shell-dev | WP3 | fixture tests incl. conflicting pin, missing SHA field, unlisted files named |
 | WP8 | `au_log_cleanup.sh` and its test plan (BATS + container steps 2-4) | shell-dev | WP1 | all refusal cases tested; container steps pass |
-| WP9 | `au_gen_config.sh`, `au_create_home_nosource.cfg`, `au_home_verify.sh` | shell-dev | WP2 | generated configs pass AU 26.6 config validation in the container |
+| WP9 | `au_gen_config.sh` (renders from `au_patch.cfg`; the no-source-home template is dropped, revision 2026-10-09), `au_home_verify.sh` | shell-dev | WP2, WP14 | generated configs pass AU 26.6 config validation in the container |
 | WP10 | `au_goldimage.sh` (create, checksum, manual install fallback); verify `create_gold_image` value form | shell-dev, architect for the AU check | WP9 | dry-run tested; real build verified once in the lab |
-| WP11 | docs: `doc/configuration.md` (precedence), `doc/installation.md` (offline install and update), keystore, gold image, cleanup; CHANGELOG, VERSION | docs-writer, reviewed against AU facts | WP2-WP10 | markdownlint clean; every AutoUpgrade statement traceable to AU facts or an Oracle doc URL |
+| WP11 | docs: `doc/configuration.md` (precedence), `doc/installation.md` (offline install and update), keystore, gold image, cleanup; CHANGELOG, VERSION | docs-writer, reviewed against AU facts | WP2-WP10, WP13-WP15 | markdownlint clean; every AutoUpgrade statement traceable to AU facts or an Oracle doc URL |
 | WP12 | final review: gitleaks, no customer data, phase report | security-reviewer, architect | all | DoD of the project brief met |
+| WP13 | patch profiles: parser with allow-list, search path, `--profile` in `au_run.sh`, per-profile download folder, pin precedence, CSPU and keyword checks, `au_patch_pin.sh --resolve-mrp`, shipped profiles | shell-dev, then security-reviewer | WP2, WP3, WP7 | BATS for search order, shadowing, unknown keys, file checks, CSPU refusals, MRP pin from a fixture; shipped profiles pass AU 26.6 config validation in the container |
+| WP14 | `etc/au_patch.cfg` and the renderer: optional set, empty-line dropping with named output, per-mode checks, keystore line for download only, deprecation WARN for the 0.5.0 templates | shell-dev | WP2, WP3 | BATS per mode incl. every dropped and every missing key; rendered configs pass AU 26.6 validation for download, create_home and deploy in the container |
+| WP15 | edition and groups: `AU_EDITION`, `AU_GROUP_*`, membership pre-check, `etc/groups/os-fixed-gid.env`; check which groups the 19c preinstall RPM creates | shell-dev, architect for the RPM check | WP14 | BATS for derivation rules (with and without source home, overrides); RPM group list recorded with its source |
+| WP16 | docs: README feature matrix standalone vs OraDBA, profile format and shipped profiles, `au_patch.cfg` variables, edition and groups, migration from the 0.5.0 templates | docs-writer | WP13-WP15 | markdownlint clean; every restricted function in the matrix names its manual step |
 <!-- markdownlint-restore -->
 
-Order: WP0 -> WP1 -> WP2 -> WP3 -> (WP6 -> WP5, WP4) and (WP7, WP8, WP9 -> WP10) in parallel where files do not
-overlap -> WP11 -> WP12. WP2 and WP6 are security-relevant and get a review before dependent work starts. Release
-target: 0.6.0 (minor) at the end of Phase 2.
+Order: WP0 -> WP1 -> WP2 -> WP3 -> WP14 -> (WP6 -> WP5, WP4) and (WP7 -> WP13, WP15, WP8, WP9 -> WP10) in parallel
+where files do not overlap -> WP11, WP16 -> WP12. WP2, WP6 and WP13 are security-relevant and get a review before
+dependent work starts. WP13-WP16 were added by the revision of 2026-10-09; WP0-WP12 keep their numbers. Release target:
+0.6.0 (minor) at the end of Phase 2.
 
 ### Outlook
 
-- **Phase 3 (Ansible)**: roles call the `au_*` scripts instead of re-implementing them; one download host, artefacts
-  verified with `au_patch_verify.sh` before distribution; F9b JAR pinning by checksum; F11 groups; F12/F13 checks;
-  Data Guard order; rollback playbook.
+- **Phase 3 (outside this repository)**, revised 2026-10-09 - Ansible and the consumers move in this order:
+  1. `oradba`: conventions page (groups, GIDs, home naming, layout); depends on the 0.6.0 design.
+  2. `oradba-ansible`: create the repository, define the Ansible standard (lint profile, molecule, variable prefixes),
+     first roles calling the engine CLI; depends on 0.6.0 and the conventions page. The former Phase 3 content goes
+     here: one download host, artefacts verified with `au_patch_verify.sh` before distribution, F9b JAR pinning by
+     checksum, F11 group creation, F12/F13 checks, Data Guard order, rollback playbook.
+  3. `oci-labs`: migrate `db19_engineering` to collection roles; the earlier lab decision not to use odb_autoupgrade is
+     reopened.
+  4. `oracle-database-docker-legacy`: rebuild the image build on the engine standalone and drop its own `au_*.sh`;
+     depends on 0.6.0 only.
+  5. `cpu-patch-tests`: monthly profiles in the profile format, run through the engine or the collection.
+  6. `oradba_init`, `docker`: freeze after the docker migration, archive later.
 - **Phase 4 (docs)**: network endpoint table for network teams, troubleshooting, migration guide from the legacy layout.
 - **Phase 5 (retire legacy)**: full-history secret scan of the legacy repository, reference sweep,
   archive, then delete after explicit confirmation.
@@ -579,7 +846,7 @@ target: 0.6.0 (minor) at the end of Phase 2.
 
 - **AutoUpgrade changes monthly.** The OUA behaviour already differed between 26.5 and 26.6 in the field. Mitigation:
   one JAR version per fleet (F9b), re-run the AU facts checks for each new jar before rollout.
-- **Static evidence.** Several key behaviours are read from the jar code, not observed end to end (create_home with a
+- **Static evidence.** Several key behaviours are derived offline, not observed end to end (create_home with a
   real source home and zips, binary option relink, OUA gold image download, key pair check with `mkstore`). Mitigation:
   lab validation before the first production window; items stay marked UNVERIFIED until then.
 - **Silent fallbacks.** `gold_image=AUTO` drops to zips with only an INFO line; on OL 9 that ends in an unusable folder
@@ -596,6 +863,16 @@ target: 0.6.0 (minor) at the end of Phase 2.
   `au_resolve_java`, OS truststore by default (0.5.0).
 - **Drift of copied library code.** `lib/common.sh` copied from `odb_datasafe` will diverge. Mitigation: record the
   source version in the header; sync check in a later phase.
+- **Pinned MRP and gold images.** A plain MRP patch number is not part of an Oracle gold image (AU facts 13 Q3);
+  create_home with image plus separate MRP zip is not yet observed. Mitigation: lab test in WP13 before CPU-test
+  profiles use pinned MRPs with `AU_GOLD_IMAGE=YES`.
+- **Edition and groups defaults.** `EE` and the preinstall group names are wrapper defaults, not AutoUpgrade defaults;
+  SE2 from a gold image and the 19c RPM group list are UNVERIFIED. Mitigation: WP15 checks, membership pre-check,
+  dropped and defaulted keys are always named in the output.
+- **Two template generations until 1.0.** The deprecated 0.5.0 templates and `au_patch.cfg` coexist. Mitigation:
+  deprecation WARN on every use, migration section in WP16, removal listed in the CHANGELOG.
+- **Cross-repository drift.** Consumers that copy instead of pinning reintroduce the duplicates. Mitigation: the
+  maintenance rules under [Cross-repository ownership](#cross-repository-ownership), pinned tag plus sha256.
 - **Legacy history.** Files are copied, never imported with history (subtree or merge), so nothing from the
   legacy history reaches the public repository.
 
@@ -656,3 +933,49 @@ The questions as originally raised:
 12. Documentation tooling: drop `generate_pdf.sh`, fonts and images now and adopt the OraDBA core `make docs-pdf` only if
     a PDF is needed? The repo uses `.markdownlint.yaml` (MD033 allow-list) while the markdown rule refers to
     `.markdownlint.json` with MD033 off; `odb_datasafe` ships both files. Which config is the standard?
+
+### Revision 2026-10-09
+
+The automation strategy accepted on 2026-10-09 (patch profiles, standalone engine, shared Ansible) changes or extends
+the decisions above. The decided text stays as it was; this note lists what changed and why.
+
+- Decision 11 (gold image default): `AU_GOLD_IMAGE` is now set **per profile**; the template default stays `NO`.
+  Profiles that ship zips use `NO`, gold image profiles use `YES`, which includes downloads that feed OL 9 builds.
+  Reason: one template serves all modes, and create_home with `YES` fails without an image in the folder (AU facts 13
+  Q5). The `VDGI_*` scan after every download is unchanged.
+- Decision 9 (home naming): unchanged. Adopting it in labs and docker images is a cross-repository question (below).
+- Decision 8 (runtime data): with a profile the download folder defaults to `patches/<profile>`; profiles of an
+  OraDBA site live in `${ORADBA_CONFIG_DIR}/autoupgrade/profiles`, outside the extension directory.
+- Configuration templates: `etc/au_patch.cfg` replaces the three 0.5.0 templates for new work; those stay as
+  deprecated aliases until 1.0. The planned `au_create_home_nosource.cfg` is dropped. Reason: one patch list for all
+  modes (F7) and AU facts 13 Q5; empty-line dropping removes the need for a separate template.
+- Precedence: new level 2a (profile) between caller environment and env files; the pin file wins over the profile
+  value for `AU_PATCH`.
+- Edition and groups: new `AU_EDITION` and `AU_GROUP_*` rules. F11 no longer waits for Phase 3 to define group names:
+  defaults are the preinstall names, the `os*` set with fixed GIDs is an example site profile. Reason: groups are a
+  site choice, and two incompatible group-name sets with identical GIDs are in use across the repositories.
+- Phase 3 (Ansible) moves from `odb_autoupgrade/ansible/` to `oradba-ansible` (collection `oradba.automation`).
+  Reason: one Ansible codebase instead of copies; repository names use hyphens, underscores only for OraDBA
+  extensions (`odb_*`); a collection FQCN cannot contain hyphens.
+- Work packages WP13-WP16 are added; WP9 renders from `au_patch.cfg`.
+
+Open questions of the revision (proposal in brackets):
+
+- Q13: Profile precedence: profile at level 2a, caller environment above it, and the pin file in the profile folder above
+    the profile `AU_PATCH`? [as designed]
+- Q14: Profile file suffix `.profile`, and the group example used by copying its lines into `autoupgrade.env` instead of
+    a separate `--groups` option? [as designed]
+- Q15: `global.keystore` rendered only for `-mode download`, so no copied keystore reaches create_home or deploy?
+    [as designed]
+- Q16: Group list of the 19c preinstall RPM: the 19c installation guide names only `oinstall` and `dba`, the 21c guide
+    all six groups. [verify in WP15 and record the source]
+
+Cross-repository questions, decided outside this repository and listed for traceability:
+
+- Home naming of decision 9 in labs and docker images (today `product/19.31/dbhome_1` and `product/19.0.0.0`).
+  Recommendation: adopt everywhere.
+- Ansible standard (lint profile, molecule, variable prefix per role) does not exist in any repository.
+  Recommendation: define it in `oradba-ansible` before the first role moves.
+- Data directory (`/u01` versus `/u00/oradata`). Recommendation: part of the conventions page, overridable.
+- Permanent home of the maintenance rules. Recommendation: README of `oradba-ansible` plus a short rule in the
+  maintainer's AI tooling, so every session sees "AutoUpgrade only via odb_autoupgrade".

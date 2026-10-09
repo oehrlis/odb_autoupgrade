@@ -5,7 +5,8 @@
 ### Added
 
 - `doc/design.md` - Phase 2 design: inventory legacy vs target, target architecture, configuration precedence,
-  gold image paths, field findings mapping, work packages and decisions
+  gold image paths, patch profiles, one template `au_patch.cfg` for all modes, edition and OS groups,
+  cross-repository ownership, field findings mapping, work packages and decisions
 
 ## 0.5.0 - 2026-10-08
 
