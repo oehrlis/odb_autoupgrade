@@ -2,118 +2,147 @@
 # ------------------------------------------------------------------------------
 # OraDBA - Oracle Database Infrastructure and Security, 5630 Muri, Switzerland
 # ------------------------------------------------------------------------------
-# Name.......: au_keystore.sh
+# Script.....: au_keystore.sh
 # Author.....: Stefan Oehrli (oes) stefan.oehrli@oradba.ch
 # Editor.....: Stefan Oehrli
-# Date.......: 2026.10.08
-# Version....: v0.5.0
-# Purpose....: Create (or skip if present) an AutoUpgrade MOS keystore using
-#              -patch -load_password via au_run.sh. Drives the interactive CLI
-#              via expect to produce ewallet.p12 + cwallet.sso.
-# Notes......: - Spawns au_run.sh (same bin dir) so Java, proxy, and truststore
-#                resolution all apply via au_run.sh / au_lib.sh.
-#              - Passwords are passed only via expect environment variables,
-#                never on a command line visible in ps output.
+# Date.......: 2026.10.09
+# Version....: v0.6.0
+# Purpose....: Manage the AutoUpgrade MOS keystore: create, check, re-save, and
+#              back up the ewallet.p12 / cwallet.sso wallet pair.
+# Notes......: Operations:
+#              --create (default): drive -patch -load_password via expect
+#              --check:  non-interactive permission/owner/symlink/key pair check
+#              --resave: backup + console "group mos" + "save" (recreates PKEY1/2)
+#              --backup: tar the keystore directory to a 0600 file in a 0700
+#                        backup directory outside logs/ and patches/
+#
+#              Security properties:
+#              - Passwords passed only via expect env vars, never on argv.
 #              - The expect script unsets EXPECT_MOS_PASS and EXPECT_KS_PASS
-#                from the child environment before spawning au_run.sh/java so
-#                that those variables are never inherited by the JVM process.
-#              - --mos-pass and --ks-pass are only allowed together with
-#                --insecure-argv; otherwise use --mos-pass-file / --ks-pass-file,
-#                the MOS_PASS / KS_PASS environment variables, or interactive
-#                'read -rs' (when stdin is a TTY).
-#              - KS_PASS does not silently default to MOS_PASS; if unset and
-#                stdin is a TTY the user is prompted; otherwise ERROR.
-#              - umask 077 is applied before creating any credential files.
-#              - The keystore directory is created with mode 0700 (mkdir -m 700).
-#              - Symlinked keystore directories or wallet files are refused.
+#                before spawning au_run.sh/java (JVM never inherits them).
+#              - --mos-pass and --ks-pass require --insecure-argv.
+#              - KS_PASS does not silently default to MOS_PASS.
+#              - umask 077 before creating any credential files.
+#              - Keystore directory created with mode 0700.
+#              - Symlinked directories or wallet files refused.
 #              - Auto-login modes (AutoUpgrade 26.x KSM_AUTO_LOGIN_PROMPT):
-#                  YES    = local auto-login, bound to host + OS user.
-#                           A copy moved to another host fails with
-#                           "Loading auto-login keystore failed" (TDE104).
-#                  SHARED = portable auto-login; anyone with the files can use
-#                           the MOS credentials (lower security). A WARN is
-#                           emitted when this mode is chosen.
-#                  NO     = no auto-login; password required each time; does not
-#                           work with -noconsole.
-#                Older JARs show "Convert ... to auto-login" instead; that
-#                branch always answers YES for backward compatibility.
-#              - MOS credentials are added via "group mos" + "add -user <user>"
-#                (not -no_password); the device-flow path creates no key pair
-#                and cannot be used for gold image downloads.
+#                  YES    = local auto-login, bound to host + OS user (default)
+#                  SHARED = portable auto-login (WARN emitted when chosen)
+#                  NO     = no auto-login; password required each time
+#              - --yes required when overwriting existing wallet (--force).
 # Reference..: https://github.com/oehrlis/odb_autoupgrade
 # License....: Apache License Version 2.0
 # ------------------------------------------------------------------------------
 # Modified...:
-# 2026.10.08 oehrli - renamed from create_mos_keystore.sh; spawn via au_run.sh,
-#                     add --auto-login option for AutoUpgrade 26.x prompt
-# 2026.10.08 oehrli - security: --insecure-argv guard for --mos-pass/--ks-pass,
-#                     unset env vars before spawn in expect, umask 077,
-#                     mkdir -m 700, symlink refusal, KS_PASS no silent default,
-#                     MOS_USER from env respected, fix trimnl to use printf
+# 2026.10.08 oehrli - initial version with --create; spawn via au_run.sh;
+#                     --auto-login, security hardening (insecure-argv guard,
+#                     umask 077, mkdir 700, symlink refusal, KS_PASS no default)
+# 2026.10.09 oehrli - WP6: --check, --resave, --backup, etc/au_keystore.cfg
+# 2026.10.09 oehrli - port onto foundation: source au_lib.sh, log_*/die from
+#                     common.sh, main "$@" structure per bin/template.sh
 # ------------------------------------------------------------------------------
 
 set -euo pipefail
 
-# - Default Values -------------------------------------------------------------
-SCRIPT_NAME=$(basename "${BASH_SOURCE[0]}")
-SCRIPT_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+# =============================================================================
+# BOOTSTRAP
+# =============================================================================
 
-AU_CFG="etc/test.cfg"                    # minimal/any valid AU config file
-WORKDIR="$(pwd)"                         # where wallet files will be written
-MOS_USER="${MOS_USER:-}"                 # --mos-user, MOS_USER env, or prompt
-MOS_PASS="${MOS_PASS:-}" # --mos-pass-file, MOS_PASS env, or prompt
-KS_PASS="${KS_PASS:-}" # --ks-pass-file, KS_PASS env, or prompt
-FORCE="false"                            # --force to overwrite existing wallet
-QUIET="false"                            # --quiet to suppress expect echo
-AUTO_LOGIN="YES"                         # --auto-login YES|SHARED|NO (default YES)
-INSECURE_ARGV="false"                    # --insecure-argv to allow pass on argv
-# - EOF Default Values ---------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+LIB_DIR="${SCRIPT_DIR}/../lib"
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+readonly SCRIPT_NAME
+SCRIPT_VERSION="0.6.0"
 
-# - Functions ------------------------------------------------------------------
+SCRIPT_BASE="$(dirname "${SCRIPT_DIR}")"
+if [[ -n "${AUTOUPGRADE_BASE:-}" && "${AUTOUPGRADE_BASE}" != "${SCRIPT_BASE}" ]]; then
+    echo "WARN: AUTOUPGRADE_BASE env var ignored (derived from script location: ${SCRIPT_BASE})" >&2
+fi
+export AUTOUPGRADE_BASE="${SCRIPT_BASE}"
 
+if [[ ! -f "${LIB_DIR}/au_lib.sh" ]]; then
+    echo "ERROR: Cannot find au_lib.sh in ${LIB_DIR}" >&2
+    exit 1
+fi
+# shellcheck source=../lib/au_lib.sh
+. "${LIB_DIR}/au_lib.sh"
+
+# =============================================================================
+# SCRIPT DEFAULTS
+# =============================================================================
+
+OPERATION="create"                          # --create|--check|--resave|--backup
+AU_CFG="etc/au_keystore.cfg"               # minimal AU config for -load_password
+WORKDIR="${AU_KEYSTORE:-$(pwd)}"            # wallet files location
+MOS_USER="${MOS_USER:-}"                    # --mos-user, MOS_USER env, or prompt
+MOS_PASS="${MOS_PASS:-}"                    # --mos-pass-file, MOS_PASS env, or prompt
+KS_PASS="${KS_PASS:-}"                      # --ks-pass-file, KS_PASS env, or prompt
+FORCE="false"                               # --force to overwrite existing wallet
+AUTO_LOGIN="YES"                            # --auto-login YES|SHARED|NO
+INSECURE_ARGV="false"                       # --insecure-argv to allow pass on argv
+YES="false"                                 # --yes for non-interactive overwrite
+BACKUP_ROOT=""                              # --backup-dir <dir>
+DRY_RUN="false"                             # --dry-run (parse_common_opts)
+
+# =============================================================================
+# FUNCTIONS
+# =============================================================================
+
+# ------------------------------------------------------------------------------
+# Function: usage
+# Purpose.: Display usage information and exit 0.
+# ------------------------------------------------------------------------------
 usage() {
-    cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [options]
+    cat <<EOF
+Usage: ${SCRIPT_NAME} [--create|--check|--resave|--backup] [options]
 
-Create an AutoUpgrade MOS keystore (ewallet.p12 + cwallet.sso) using
-au_run.sh -config <cfg> -patch -load_password. Requires expect.
+Manage the AutoUpgrade MOS keystore (ewallet.p12 + cwallet.sso).
 
-Options:
-  --workdir DIR            Working dir; wallet files will be created here
-  --cfg PATH               Path to AU config file (default: etc/test.cfg)
-  --mos-user USER          MOS username (email; also read from MOS_USER env)
-  --mos-pass-file FILE     Read MOS password from file/secret (preferred)
-  --ks-pass-file FILE      Read keystore password from file/secret (preferred)
-  --auto-login MODE        Auto-login mode for AutoUpgrade 26.x [YES|SHARED|NO]
-                           YES    = local auto-login, bound to host + OS user (default)
-                           SHARED = portable auto-login (WARN: less secure)
-                           NO     = no auto-login; password required each time
-  --force                  Recreate wallet even if files exist
-  --quiet                  Reduce expect output
-  --insecure-argv          Allow --mos-pass and --ks-pass (visible in ps, shell history)
+Operations (default: --create):
+  --create          Create keystore via au_run.sh -patch -load_password
+  --check           Check permissions, owner, symlinks, key pair (non-interactive)
+  --resave          Backup then re-save keystore (recreates PKEY1/PKEY2)
+  --backup          Backup keystore directory to a 0600 tar.gz in a 0700 dir
+
+Common options:
+  -h, --help        Show this help message
+  -V, --version     Show version
+  -v, --verbose     Enable verbose output
+  -d, --debug       Enable debug output
+  -q, --quiet       Quiet mode (WARN level only)
+  -n, --dry-run     Show what would be done without making changes
+
+Keystore options:
+  --workdir DIR            Keystore directory (default: AU_KEYSTORE or cwd)
+  --cfg PATH               AU config file for --create/--resave
+                           (default: etc/au_keystore.cfg)
+  --mos-user USER          MOS username (email; also MOS_USER env)
+  --mos-pass-file FILE     Read MOS password from file (preferred)
+  --ks-pass-file FILE      Read keystore password from file (preferred)
+  --auto-login MODE        YES|SHARED|NO (default YES)
+  --force                  Overwrite existing wallet (--create)
+  --yes                    Skip confirmation when overwriting with --force
+  --backup-dir DIR         Custom backup root (default: <workdir>_backup)
+  --insecure-argv          Allow --mos-pass / --ks-pass (visible in ps)
   --mos-pass PASS          MOS password on argv (requires --insecure-argv)
   --ks-pass PASS           Keystore password on argv (requires --insecure-argv)
-  --help                   Show this help and exit
 
 Password precedence (highest first):
-  1. --mos-pass-file / --ks-pass-file (read from file, stripped of trailing CR/LF)
+  1. --mos-pass-file / --ks-pass-file
   2. MOS_PASS / KS_PASS environment variables
   3. --mos-pass / --ks-pass (only with --insecure-argv)
   4. Interactive prompt (when stdin is a TTY)
 
-Examples:
-  ${SCRIPT_NAME} --workdir /u00/app/oracle/autoupgrade/keystore \\
-    --cfg /u00/app/oracle/autoupgrade/etc/dummy.config \\
-    --mos-user you@example.com --mos-pass-file /run/secrets/mos_pass \\
-    --ks-pass-file /run/secrets/ks_pass
 EOF
+    exit 0
 }
 
-die() { echo "ERROR: $*" >&2; exit 1; }
-
-# Read a file and strip trailing newlines/carriage returns without a subshell
-# pipeline. Uses printf '%s' to avoid echo's interpretation of backslash
-# sequences and to suppress the implicit trailing newline.
+# ------------------------------------------------------------------------------
+# Function: trimnl
+# Purpose.: Read a file and strip trailing CR/LF without a subshell pipeline.
+# Args....: $1 - file path
+# Stdout..: file content without trailing newlines
+# ------------------------------------------------------------------------------
 trimnl() {
     local content
     content="$(cat "$1")"
@@ -123,176 +152,95 @@ trimnl() {
     done
     printf '%s' "${content}"
 }
-# - EOF Functions --------------------------------------------------------------
 
-# - Parse Parameters -----------------------------------------------------------
-# Collect --insecure-argv first so it can gate --mos-pass / --ks-pass
-_ARG_MOS_PASS=""
-_ARG_KS_PASS=""
-
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --workdir)       WORKDIR="$2"; shift 2 ;;
-        --cfg)           AU_CFG="$2"; shift 2 ;;
-        --mos-user)      MOS_USER="$2"; shift 2 ;;
-        --mos-pass-file) MOS_PASS="$(trimnl "$2")"; shift 2 ;;
-        --ks-pass-file)  KS_PASS="$(trimnl "$2")"; shift 2 ;;
-        --mos-pass)
-            # Deferred: only accepted with --insecure-argv
-            _ARG_MOS_PASS="$2"; shift 2 ;;
-        --ks-pass)
-            # Deferred: only accepted with --insecure-argv
-            _ARG_KS_PASS="$2"; shift 2 ;;
-        --auto-login)
-            case "${2:-}" in
-                YES|SHARED|NO) AUTO_LOGIN="$2" ;;
-                *) die "--auto-login must be YES, SHARED, or NO" ;;
-            esac
-            shift 2 ;;
-        --au-jar)
-            echo "WARN: --au-jar is ignored since v0.5.0 (au_run.sh uses jar/autoupgrade.jar)" >&2
-            shift 2 ;;
-        --insecure-argv) INSECURE_ARGV="true"; shift ;;
-        --force)  FORCE="true"; shift ;;
-        --quiet)  QUIET="true"; shift ;;
-        -h|--help) usage; exit 0 ;;
-        *) die "Unknown option: $1" ;;
-    esac
-done
-
-# Apply deferred argv passwords only when --insecure-argv was given
-if [[ -n "${_ARG_MOS_PASS}" || -n "${_ARG_KS_PASS}" ]]; then
-    if [[ "${INSECURE_ARGV}" != "true" ]]; then
-        die "--mos-pass / --ks-pass require --insecure-argv." \
-            $'\n'"       Preferred alternatives:" \
-            $'\n'"         --mos-pass-file FILE  (read from file/secret)" \
-            $'\n'"         MOS_PASS / KS_PASS env vars" \
-            $'\n'"         interactive prompt (stdin TTY)"
-    fi
-    [[ -n "${_ARG_MOS_PASS}" ]] && MOS_PASS="${_ARG_MOS_PASS}"
-    [[ -n "${_ARG_KS_PASS}" ]]  && KS_PASS="${_ARG_KS_PASS}"
-fi
-# MOS_PASS / KS_PASS from the environment were picked up in Default Values;
-# anything still empty is prompted for below
-# - EOF Parse Parameters -------------------------------------------------------
-
-# - Sanity Checks --------------------------------------------------------------
-AU_RUN="${SCRIPT_BIN_DIR}/au_run.sh"
-[[ -x "${AU_RUN}" ]] || die "au_run.sh not found or not executable at ${AU_RUN}"
-command -v expect >/dev/null 2>&1 || die "expect not found (dnf/yum/apt install expect)"
-
-# Normalise trailing slashes so the symlink check below sees the link itself
-while [[ "${WORKDIR}" == */ && "${WORKDIR}" != "/" ]]; do WORKDIR="${WORKDIR%/}"; done
-
-# Create WORKDIR with restricted permissions.
-# -p with -m only applies to the deepest dir on some platforms; use chmod after.
-if [[ ! -d "${WORKDIR}" ]]; then
-    mkdir -p "${WORKDIR}" || die "Cannot create WORKDIR: ${WORKDIR}"
-    chmod 700 "${WORKDIR}"
-fi
-
-# Refuse symlinked WORKDIR
-if [[ -L "${WORKDIR}" ]]; then
-    die "WORKDIR is a symlink, refusing to use: ${WORKDIR}"
-fi
-
-# Resolve AU_CFG relative to WORKDIR if it is a relative path
-[[ "${AU_CFG}" = /* ]] || AU_CFG="${WORKDIR%/}/${AU_CFG}"
-[[ -f "${AU_CFG}" ]] || die "AU config not found: ${AU_CFG}"
-
-[[ -n "${MOS_USER}" ]] || die "--mos-user (or MOS_USER env) is required"
-
-# Resolve MOS_PASS: prompt if TTY and not yet set
-if [[ -z "${MOS_PASS}" ]]; then
+# ------------------------------------------------------------------------------
+# Function: confirm_overwrite
+# Purpose.: Ask user to confirm an overwrite when --yes is not set.
+# Args....: $1 - prompt string
+# Returns.: 0 on confirm, exits via die on refusal
+# ------------------------------------------------------------------------------
+confirm_overwrite() {
+    local prompt="$1"
+    if [[ "${YES}" == "true" ]]; then return 0; fi
     if [[ -t 0 ]]; then
-        read -rs -p "MOS Password: " MOS_PASS </dev/tty
-        echo >&2
+        local answer
+        read -r -p "${prompt} [y/N] " answer </dev/tty
+        [[ "${answer}" =~ ^[Yy]$ ]] || die "Aborted by user."
     else
-        die "MOS password not set. Use --mos-pass-file, MOS_PASS env var, or run interactively."
+        die "Overwrite requires --yes in non-interactive mode."
     fi
-fi
+}
 
-# Resolve KS_PASS: prompt if TTY, but do NOT silently default to MOS_PASS
-if [[ -z "${KS_PASS}" ]]; then
-    if [[ -t 0 ]]; then
-        read -rs -p "Keystore Password: " KS_PASS </dev/tty
-        echo >&2
-    else
-        die "Keystore password not set. Use --ks-pass-file, KS_PASS env var, or run interactively. (Does not default to MOS password.)"
+# ------------------------------------------------------------------------------
+# Function: run_create
+# Purpose.: Drive the expect-based keystore creation flow (--create).
+# ------------------------------------------------------------------------------
+run_create() {
+    local ewallet="${WORKDIR%/}/ewallet.p12"
+    local cwallet="${WORKDIR%/}/cwallet.sso"
+
+    [[ -L "${ewallet}" ]] && die "ewallet.p12 is a symlink, refusing: ${ewallet}"
+    [[ -L "${cwallet}" ]] && die "cwallet.sso is a symlink, refusing: ${cwallet}"
+
+    if [[ "${FORCE}" != "true" && ( -f "${ewallet}" || -f "${cwallet}" ) ]]; then
+        log_info "Wallet already exists in ${WORKDIR} (use --force to recreate). Skipping."
+        exit 0
     fi
-fi
 
-EWL="${WORKDIR%/}/ewallet.p12"
-CWL="${WORKDIR%/}/cwallet.sso"
+    if [[ "${FORCE}" == "true" && ( -f "${ewallet}" || -f "${cwallet}" ) ]]; then
+        confirm_overwrite "Overwrite existing wallet in ${WORKDIR}?"
+        local bak
+        bak="$(au_keystore_backup "${WORKDIR}" "${BACKUP_ROOT}")" \
+            && log_info "Backup: ${bak}" \
+            || log_warn "Backup failed; continuing."
+    fi
 
-# Refuse symlinked wallet files
-if [[ -L "${EWL}" ]]; then
-    die "ewallet.p12 is a symlink, refusing to use: ${EWL}"
-fi
-if [[ -L "${CWL}" ]]; then
-    die "cwallet.sso is a symlink, refusing to use: ${CWL}"
-fi
+    if [[ "${AUTO_LOGIN}" == "SHARED" ]]; then
+        log_warn "--auto-login SHARED: portable keystore - anyone with the files can use MOS credentials"
+    fi
 
-if [[ "${FORCE}" != "true" && ( -f "${EWL}" || -f "${CWL}" ) ]]; then
-    echo "Wallet already exists in ${WORKDIR} (use --force to recreate). Skipping."
-    exit 0
-fi
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log_info "DRY-RUN: would run au_run.sh -config ${AU_CFG} -patch -load_password"
+        return 0
+    fi
 
-# Warn when SHARED auto-login chosen (portable but lower security)
-if [[ "${AUTO_LOGIN}" == "SHARED" ]]; then
-    echo "WARN: --auto-login SHARED: portable keystore - anyone with the files can use the MOS credentials" >&2
-fi
-# - EOF Sanity Checks ----------------------------------------------------------
+    umask 077
+    export -n MOS_PASS KS_PASS 2>/dev/null || true
 
-# - Main Script Logic ----------------------------------------------------------
-# Apply umask 077 so all credential files are created 0600/0700 by default
-umask 077
+    (
+        cd "${WORKDIR}"
+        local exp_log_user
+        exp_log_user="$([[ "${LOG_LEVEL:-WARN}" == "WARN" || "${LOG_LEVEL:-WARN}" == "ERROR" ]] && printf '0' || printf '1')"
 
-# Keep passwords as shell variables only: callers may have exported MOS_PASS /
-# KS_PASS, which au_run.sh and java would otherwise inherit
-export -n MOS_PASS KS_PASS 2>/dev/null || true
-
-# cd to WORKDIR so AutoUpgrade writes wallet files there
-(
-    cd "${WORKDIR}"
-
-    EXP_LOG_USER="$([[ "${QUIET}" == "true" ]] && echo 0 || echo 1)"
-
-    EXPECT_AU_RUN="${AU_RUN}" \
-    EXPECT_AU_CFG="${AU_CFG}" \
-    EXPECT_MOS_USER="${MOS_USER}" \
-    EXPECT_MOS_PASS="${MOS_PASS}" \
-    EXPECT_KS_PASS="${KS_PASS}" \
-    EXPECT_AUTO_LOGIN="${AUTO_LOGIN}" \
-    EXP_LOG_USER="${EXP_LOG_USER}" \
-    expect <<'EOF'
-    # Debug toggles (set to 1 to troubleshoot):
-    # log_user 1
-    # exp_internal 1
-
+        EXPECT_AU_RUN="${AU_RUN}" \
+        EXPECT_AU_CFG="${AU_CFG}" \
+        EXPECT_MOS_USER="${MOS_USER}" \
+        EXPECT_MOS_PASS="${MOS_PASS}" \
+        EXPECT_KS_PASS="${KS_PASS}" \
+        EXPECT_AUTO_LOGIN="${AUTO_LOGIN}" \
+        EXP_LOG_USER="${exp_log_user}" \
+        expect <<'EXPECTEOF'
     set timeout 120
     log_user $env(EXP_LOG_USER)
 
-    set au_run     $env(EXPECT_AU_RUN)
-    set cfg        $env(EXPECT_AU_CFG)
-    set user       $env(EXPECT_MOS_USER)
-    set pass       $env(EXPECT_MOS_PASS)
-    set kspass     $env(EXPECT_KS_PASS)
-    set autologin  $env(EXPECT_AUTO_LOGIN)
+    set au_run    $env(EXPECT_AU_RUN)
+    set cfg       $env(EXPECT_AU_CFG)
+    set user      $env(EXPECT_MOS_USER)
+    set pass      $env(EXPECT_MOS_PASS)
+    set kspass    $env(EXPECT_KS_PASS)
+    set autologin $env(EXPECT_AUTO_LOGIN)
 
-    # Unset credential env vars before spawning so au_run.sh / java do not inherit them
     unset env(EXPECT_MOS_PASS)
     unset env(EXPECT_KS_PASS)
 
     set user_added 0
 
-    # Spawn via au_run.sh so Java, proxy, and truststore resolution all apply
     spawn bash $au_run -config $cfg -patch -load_password
 
     expect {
-        "Enter password:" { send -- "$kspass\r"; exp_continue }
-        "Enter password again:" { send -- "$kspass\r"; exp_continue }
-        "Enter wallet password:" { send -- "$kspass\r"; exp_continue }
+        "Enter password:"         { send -- "$kspass\r"; exp_continue }
+        "Enter password again:"   { send -- "$kspass\r"; exp_continue }
+        "Enter wallet password:"  { send -- "$kspass\r"; exp_continue }
 
         -re {^MOS>\s*$} {
             if { $user_added == 0 } {
@@ -304,35 +252,284 @@ export -n MOS_PASS KS_PASS 2>/dev/null || true
             exp_continue
         }
 
-        "Enter your secret/Password:" { send -- "$pass\r"; exp_continue }
+        "Enter your secret/Password:"    { send -- "$pass\r"; exp_continue }
         "Re-enter your secret/Password:" { send -- "$pass\r"; exp_continue }
 
         -re {Save the AutoUpgrade Patching keystore before exiting.*} {
             send -- "YES\r"; exp_continue
         }
 
-        # AutoUpgrade 26.x KSM_AUTO_LOGIN_PROMPT
         -re {Select auto-login mode for the AutoUpgrade Patching keystore.*\[YES|NO|SHARED\].*} {
             send -- "$autologin\r"; exp_continue
         }
 
-        # Older JAR: "Convert ... to auto-login" prompt
         -re {Convert the AutoUpgrade Patching keystore to auto-login.*} {
             send -- "YES\r"; exp_continue
         }
 
-        eof { exit 0 }
+        eof     { exit 0 }
         timeout { puts "ERROR: timed out during keystore creation"; exit 1 }
     }
-EOF
-)
+EXPECTEOF
+    )
 
-# - Verify Outputs -------------------------------------------------------------
-[[ -f "${EWL}" ]] || die "Keystore creation finished but ewallet.p12 not found in ${WORKDIR}"
-# cwallet.sso may be created after 'save'/'YES'; tolerate absence if AU chose not to
-if [[ -f "${CWL}" ]]; then
-    chmod 600 "${CWL}"
-fi
-chmod 600 "${EWL}"
-echo "Keystore created in ${WORKDIR}"
+    [[ -f "${ewallet}" ]] || die "Keystore creation finished but ewallet.p12 not found in ${WORKDIR}"
+    [[ -f "${cwallet}" ]] && chmod 600 "${cwallet}"
+    chmod 600 "${ewallet}"
+    log_info "Keystore created in ${WORKDIR}"
+}
+
+# ------------------------------------------------------------------------------
+# Function: run_check
+# Purpose.: Non-interactive permission/key-pair check (--check).
+# ------------------------------------------------------------------------------
+run_check() {
+    local jar_file="${SCRIPT_BASE}/jar/autoupgrade.jar"
+    au_keystore_check "${WORKDIR}" "${jar_file}"
+}
+
+# ------------------------------------------------------------------------------
+# Function: run_resave
+# Purpose.: Backup + re-save via "group mos" + "save" (--resave).
+# ------------------------------------------------------------------------------
+run_resave() {
+    local ewallet="${WORKDIR%/}/ewallet.p12"
+    [[ -f "${ewallet}" ]] || die "No ewallet.p12 found in ${WORKDIR}. Run --create first."
+
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log_info "DRY-RUN: would backup ${WORKDIR} then run au_run.sh -patch -load_password (group mos + save)"
+        return 0
+    fi
+
+    local bak
+    bak="$(au_keystore_backup "${WORKDIR}" "${BACKUP_ROOT}")" \
+        || die "Backup failed; aborting resave."
+    log_info "Backup: ${bak}"
+
+    if [[ "${AUTO_LOGIN}" == "SHARED" ]]; then
+        log_warn "--auto-login SHARED: portable keystore - anyone with the files can use MOS credentials"
+    fi
+
+    umask 077
+    export -n KS_PASS 2>/dev/null || true
+
+    (
+        cd "${WORKDIR}"
+        local exp_log_user
+        exp_log_user="$([[ "${LOG_LEVEL:-WARN}" == "WARN" || "${LOG_LEVEL:-WARN}" == "ERROR" ]] && printf '0' || printf '1')"
+
+        EXPECT_AU_RUN="${AU_RUN}" \
+        EXPECT_AU_CFG="${AU_CFG}" \
+        EXPECT_KS_PASS="${KS_PASS}" \
+        EXPECT_AUTO_LOGIN="${AUTO_LOGIN}" \
+        EXP_LOG_USER="${exp_log_user}" \
+        expect <<'EXPECTEOF'
+    set timeout 120
+    log_user $env(EXP_LOG_USER)
+
+    set au_run    $env(EXPECT_AU_RUN)
+    set cfg       $env(EXPECT_AU_CFG)
+    set kspass    $env(EXPECT_KS_PASS)
+    set autologin $env(EXPECT_AUTO_LOGIN)
+
+    unset env(EXPECT_KS_PASS)
+
+    spawn bash $au_run -config $cfg -patch -load_password
+
+    expect {
+        "Enter password:"         { send -- "$kspass\r"; exp_continue }
+        "Enter password again:"   { send -- "$kspass\r"; exp_continue }
+        "Enter wallet password:"  { send -- "$kspass\r"; exp_continue }
+
+        -re {^MOS>\s*$} {
+            send -- "group mos\r"; exp_continue
+        }
+
+        -re {^MOS mos>\s*$} {
+            send -- "save\r"; exp_continue
+        }
+
+        -re {Save the AutoUpgrade Patching keystore before exiting.*} {
+            send -- "YES\r"; exp_continue
+        }
+
+        -re {Select auto-login mode for the AutoUpgrade Patching keystore.*\[YES|NO|SHARED\].*} {
+            send -- "$autologin\r"; exp_continue
+        }
+
+        -re {Convert the AutoUpgrade Patching keystore to auto-login.*} {
+            send -- "YES\r"; exp_continue
+        }
+
+        eof     { exit 0 }
+        timeout { puts "ERROR: timed out during keystore re-save"; exit 1 }
+    }
+EXPECTEOF
+    )
+
+    log_info "Keystore re-saved in ${WORKDIR}"
+}
+
+# ------------------------------------------------------------------------------
+# Function: run_backup
+# Purpose.: Back up the keystore directory (--backup).
+# ------------------------------------------------------------------------------
+run_backup() {
+    [[ -d "${WORKDIR}" ]] || die "Keystore directory not found: ${WORKDIR}"
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log_info "DRY-RUN: would backup ${WORKDIR} to ${BACKUP_ROOT:-<workdir>_backup}"
+        return 0
+    fi
+    local bak
+    bak="$(au_keystore_backup "${WORKDIR}" "${BACKUP_ROOT}")" \
+        || die "Backup failed."
+    log_info "Backup created: ${bak}"
+}
+
+# ------------------------------------------------------------------------------
+# Function: parse_args
+# Purpose.: Parse command-line arguments.
+# ------------------------------------------------------------------------------
+parse_args() {
+    parse_common_opts "$@"
+
+    local -a remaining=()
+    set -- "${ARGS[@]-}"
+
+    local _arg_mos_pass="" _arg_ks_pass=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --create)        OPERATION="create"; shift ;;
+            --check)         OPERATION="check"; shift ;;
+            --resave)        OPERATION="resave"; shift ;;
+            --backup)        OPERATION="backup"; shift ;;
+            --workdir)       WORKDIR="$2"; shift 2 ;;
+            --cfg)           AU_CFG="$2"; shift 2 ;;
+            --mos-user)      MOS_USER="$2"; shift 2 ;;
+            --mos-pass-file) MOS_PASS="$(trimnl "$2")"; shift 2 ;;
+            --ks-pass-file)  KS_PASS="$(trimnl "$2")"; shift 2 ;;
+            --backup-dir)    BACKUP_ROOT="$2"; shift 2 ;;
+            --mos-pass)      _arg_mos_pass="$2"; shift 2 ;;
+            --ks-pass)       _arg_ks_pass="$2"; shift 2 ;;
+            --auto-login)
+                case "${2:-}" in
+                    YES|SHARED|NO) AUTO_LOGIN="$2" ;;
+                    *) die "--auto-login must be YES, SHARED, or NO" ;;
+                esac
+                shift 2 ;;
+            --au-jar)
+                log_warn "--au-jar ignored since v0.5.0 (au_run.sh uses jar/autoupgrade.jar)"
+                shift 2 ;;
+            --insecure-argv) INSECURE_ARGV="true"; shift ;;
+            --force)         FORCE="true"; shift ;;
+            --yes)           YES="true"; shift ;;
+            -*)
+                die "Unknown option: $1 (use --help for usage)" ;;
+            *)
+                remaining+=("$1"); shift ;;
+        esac
+    done
+    ARGS=("${remaining[@]+"${remaining[@]}"}")
+
+    if [[ -n "${_arg_mos_pass}" || -n "${_arg_ks_pass}" ]]; then
+        if [[ "${INSECURE_ARGV}" != "true" ]]; then
+            die "--mos-pass / --ks-pass require --insecure-argv. Preferred: --mos-pass-file or MOS_PASS env."
+        fi
+        [[ -n "${_arg_mos_pass}" ]] && MOS_PASS="${_arg_mos_pass}"
+        [[ -n "${_arg_ks_pass}" ]]  && KS_PASS="${_arg_ks_pass}"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Function: validate_inputs
+# Purpose.: Validate required inputs and resolve paths.
+# ------------------------------------------------------------------------------
+validate_inputs() {
+    # Normalise trailing slashes
+    while [[ "${WORKDIR}" == */ && "${WORKDIR}" != "/" ]]; do WORKDIR="${WORKDIR%/}"; done
+
+    # --check and --backup do not need au_run.sh or expect
+    if [[ "${OPERATION}" == "check" || "${OPERATION}" == "backup" ]]; then
+        return 0
+    fi
+
+    AU_RUN="${SCRIPT_DIR}/au_run.sh"
+    require_cmd expect
+    [[ -x "${AU_RUN}" ]] || die "au_run.sh not found or not executable at ${AU_RUN}"
+
+    # Create WORKDIR with restricted permissions
+    if [[ ! -d "${WORKDIR}" ]]; then
+        mkdir -p "${WORKDIR}" || die "Cannot create WORKDIR: ${WORKDIR}"
+        chmod 700 "${WORKDIR}"
+    fi
+    [[ -L "${WORKDIR}" ]] && die "WORKDIR is a symlink, refusing: ${WORKDIR}"
+
+    # Resolve AU_CFG relative to SCRIPT_BASE if not absolute
+    [[ "${AU_CFG}" = /* ]] || AU_CFG="${SCRIPT_BASE}/${AU_CFG}"
+    [[ -f "${AU_CFG}" ]] || die "AU config not found: ${AU_CFG}"
+
+    # Passwords for --create
+    if [[ "${OPERATION}" == "create" ]]; then
+        [[ -n "${MOS_USER}" ]] || die "--mos-user (or MOS_USER env) is required for --create"
+        if [[ -z "${MOS_PASS}" ]]; then
+            if [[ -t 0 ]]; then
+                read -rs -p "MOS Password: " MOS_PASS </dev/tty; echo >&2
+            else
+                die "MOS password not set. Use --mos-pass-file, MOS_PASS env, or run interactively."
+            fi
+        fi
+    fi
+
+    # KS_PASS for --create and --resave
+    if [[ -z "${KS_PASS}" ]]; then
+        if [[ -t 0 ]]; then
+            read -rs -p "Keystore Password: " KS_PASS </dev/tty; echo >&2
+        else
+            die "Keystore password not set. Use --ks-pass-file, KS_PASS env, or run interactively."
+        fi
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Function: do_work
+# Purpose.: Dispatch to operation-specific function.
+# ------------------------------------------------------------------------------
+do_work() {
+    case "${OPERATION}" in
+        create) run_create ;;
+        check)  run_check ;;
+        resave) run_resave ;;
+        backup) run_backup ;;
+        *) die "Unknown operation: ${OPERATION}" ;;
+    esac
+}
+
+# ------------------------------------------------------------------------------
+# Function: cleanup
+# Purpose.: Cleanup function called on EXIT trap.
+# ------------------------------------------------------------------------------
+cleanup() {
+    log_debug "Cleanup completed"
+}
+
+# =============================================================================
+# MAIN
+# =============================================================================
+
+main() {
+    setup_error_handling
+
+    au_load_config
+
+    parse_args "$@"
+
+    validate_inputs
+
+    do_work
+
+    log_debug "${SCRIPT_NAME} completed successfully"
+}
+
+main "$@"
 # - EOF ------------------------------------------------------------------------
