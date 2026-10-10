@@ -284,7 +284,7 @@ make_cfg() {
 @test "--backup creates tar.gz backup" {
     make_wallet_files "${WORK_DIR}/keystore"
     run bash "${SCRIPT}" --backup --workdir "${WORK_DIR}/keystore" \
-        --backup-dir "${WORK_DIR}/ks_backup"
+        --backup-dir "${WORK_DIR}/ks_backup" --verbose
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"Backup created"* ]]
     local bak_count
@@ -309,7 +309,7 @@ make_cfg() {
     cfg="$(make_cfg)"
     run bash "${SCRIPT}" --create --workdir "${WORK_DIR}/keystore" \
         --cfg "${cfg}" --mos-user test@example.com \
-        --insecure-argv --mos-pass pass1 --ks-pass pass2
+        --insecure-argv --mos-pass pass1 --ks-pass pass2 --verbose
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"Skipping"* ]]
 }

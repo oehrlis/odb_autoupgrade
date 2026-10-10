@@ -52,7 +52,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 LIB_DIR="${SCRIPT_DIR}/../lib"
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 readonly SCRIPT_NAME
-SCRIPT_VERSION="0.6.0"
+: "${SCRIPT_VERSION:=0.6.0}"
 
 SCRIPT_BASE="$(dirname "${SCRIPT_DIR}")"
 if [[ -n "${AUTOUPGRADE_BASE:-}" && "${AUTOUPGRADE_BASE}" != "${SCRIPT_BASE}" ]]; then

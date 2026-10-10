@@ -45,7 +45,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 LIB_DIR="${SCRIPT_DIR}/../lib"
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 readonly SCRIPT_NAME
-SCRIPT_VERSION="0.6.0"
+: "${SCRIPT_VERSION:=0.6.0}"
 
 SCRIPT_BASE="$(dirname "${SCRIPT_DIR}")"
 if [[ -n "${AUTOUPGRADE_BASE:-}" && "${AUTOUPGRADE_BASE}" != "${SCRIPT_BASE}" ]]; then
@@ -74,6 +74,7 @@ DRY_RUN="false"                          # set by parse_common_opts
 FORCE="false"                            # --force to allow downgrade
 YES="false"                              # --yes for non-interactive confirm
 NO_VERIFY="false"                        # --no-verify: skip post-install check
+_JAR_TMP_FILE=""                         # temp download file; removed by cleanup trap
 
 # =============================================================================
 # FUNCTIONS
@@ -294,35 +295,34 @@ validate_inputs() {
 do_work() {
     if [[ "${DRY_RUN}" == "true" ]]; then
         if [[ -n "${SOURCE_FILE:-}" ]]; then
-            log_info "DRY-RUN: would install ${SOURCE_FILE} to ${JAR_FILE}"
+            log_warn "DRY-RUN: would install ${SOURCE_FILE} to ${JAR_FILE}"
         else
-            log_info "DRY-RUN: would download ${SOURCE_URL} to ${JAR_FILE}"
+            log_warn "DRY-RUN: would download ${SOURCE_URL} to ${JAR_FILE}"
         fi
         return 0
     fi
 
     mkdir -p "${JAR_DIR}"
 
-    # Temp file in same filesystem as JAR_DIR for atomic mv
-    local TMP_FILE
-    TMP_FILE="$(mktemp "${JAR_DIR}/.au_update_XXXXXX")"
-    trap 'rm -f "${TMP_FILE}"' EXIT
+    # Temp file in same filesystem as JAR_DIR for atomic mv.
+    # Use global _JAR_TMP_FILE so the cleanup() EXIT trap can remove it.
+    _JAR_TMP_FILE="$(mktemp "${JAR_DIR}/.au_update_XXXXXX")"
 
     if [[ -n "${SOURCE_FILE:-}" ]]; then
         log_info "Installing from file: ${SOURCE_FILE}"
-        cp "${SOURCE_FILE}" "${TMP_FILE}"
+        cp "${SOURCE_FILE}" "${_JAR_TMP_FILE}"
     else
         log_info "Downloading: ${SOURCE_URL}"
-        curl --proto '=https' --proto-redir '=https' -Lf "${SOURCE_URL}" -o "${TMP_FILE}" \
+        curl --proto '=https' --proto-redir '=https' -Lf "${SOURCE_URL}" -o "${_JAR_TMP_FILE}" \
             || die "Download failed from: ${SOURCE_URL}"
     fi
 
-    validate_jar "${TMP_FILE}"
+    validate_jar "${_JAR_TMP_FILE}"
 
     local actual_sha=""
-    actual_sha="$(au_sha256 "${TMP_FILE}" 2>/dev/null || true)"
+    actual_sha="$(au_sha256 "${_JAR_TMP_FILE}" 2>/dev/null || true)"
     log_info "SHA-256: ${actual_sha:-unavailable}"
-    log_info "Size: $(au_file_size "${TMP_FILE}") bytes"
+    log_info "Size: $(au_file_size "${_JAR_TMP_FILE}") bytes"
 
     if [[ -n "${EXPECTED_SHA256}" ]]; then
         if [[ -z "${actual_sha}" ]]; then
@@ -335,7 +335,7 @@ do_work() {
     fi
 
     local new_ver old_ver=""
-    new_ver="$(au_jar_version "${TMP_FILE}")"
+    new_ver="$(au_jar_version "${_JAR_TMP_FILE}")"
     [[ -f "${JAR_FILE}" ]] && old_ver="$(au_jar_version "${JAR_FILE}" 2>/dev/null || true)"
 
     if [[ -n "${old_ver}" ]]; then
@@ -349,7 +349,7 @@ do_work() {
         au_version_compare "${new_ver}" "${old_ver}" && cmp_rc=0 || cmp_rc=$?
 
         if [[ "${cmp_rc}" -eq 0 ]]; then
-            if cmp -s "${TMP_FILE}" "${JAR_FILE}"; then
+            if cmp -s "${_JAR_TMP_FILE}" "${JAR_FILE}"; then
                 log_info "Already up to date (${new_ver}). No changes made."
                 return 0
             fi
@@ -368,7 +368,7 @@ do_work() {
         prune_jar_backups "${KEEP_N}"
     fi
 
-    mv "${TMP_FILE}" "${JAR_FILE}"
+    mv "${_JAR_TMP_FILE}" "${JAR_FILE}"
     chmod 0644 "${JAR_FILE}"
     log_info "Installed: ${JAR_FILE}"
 
@@ -389,6 +389,7 @@ do_work() {
 # Purpose.: Cleanup function called on EXIT trap.
 # ------------------------------------------------------------------------------
 cleanup() {
+    [[ -n "${_JAR_TMP_FILE}" ]] && rm -f "${_JAR_TMP_FILE}"
     log_debug "Cleanup completed"
 }
 

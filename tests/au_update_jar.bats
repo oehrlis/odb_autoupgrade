@@ -186,7 +186,7 @@ EOF
     local new_jar
     new_jar="$(make_fake_au_jar "${ver}")"
     cp "${new_jar}" "${jar}"
-    run bash "${SCRIPT}" --from "${new_jar}" --no-verify
+    run bash "${SCRIPT}" --from "${new_jar}" --no-verify --verbose
     rm -f "${jar}"
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"up to date"* || "${output}" == *"reinstalling"* ]]
