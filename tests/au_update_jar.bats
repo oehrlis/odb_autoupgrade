@@ -15,6 +15,8 @@ setup() {
 
     WORK_DIR="${BATS_TMPDIR}/jar_test_$$_${RANDOM}"
     mkdir -p "${WORK_DIR}/bin" "${WORK_DIR}/jar" "${WORK_DIR}/etc"
+    # Never touch the repository jar/ directory (a real JAR may live there)
+    export AU_JAR_DIR="${WORK_DIR}/jar"
 
     unset AU_KEYSTORE 2>/dev/null || true
 }
@@ -108,9 +110,9 @@ EOF
     fake="$(make_fake_au_jar "26.6.260925")"
     run bash "${SCRIPT}" --from "${fake}" --no-verify
     [ "${status}" -eq 0 ]
-    [ -f "${REPO_ROOT}/jar/autoupgrade.jar" ]
+    [ -f "${AU_JAR_DIR}/autoupgrade.jar" ]
     # Cleanup: restore original state
-    rm -f "${REPO_ROOT}/jar/autoupgrade.jar"
+    rm -f "${AU_JAR_DIR}/autoupgrade.jar"
 }
 
 @test "--from fails for nonexistent file" {
@@ -157,7 +159,7 @@ EOF
 # ---------------------------------------------------------------------------
 
 @test "downgrade refused without --force" {
-    local old_jar="${REPO_ROOT}/jar/autoupgrade.jar"
+    local old_jar="${AU_JAR_DIR}/autoupgrade.jar"
     local old_ver="26.7.261010"
     local new_ver="26.6.260925"
     make_fake_au_jar "${old_ver}" "${old_jar}" >/dev/null
@@ -170,19 +172,19 @@ EOF
 }
 
 @test "downgrade allowed with --force --yes" {
-    local old_jar="${REPO_ROOT}/jar/autoupgrade.jar"
+    local old_jar="${AU_JAR_DIR}/autoupgrade.jar"
     make_fake_au_jar "26.7.261010" "${old_jar}" >/dev/null
     local new_jar
     new_jar="$(make_fake_au_jar "26.6.260925")"
     run bash "${SCRIPT}" --from "${new_jar}" --force --yes --no-verify
-    rm -f "${REPO_ROOT}/jar/autoupgrade.jar"
+    rm -f "${AU_JAR_DIR}/autoupgrade.jar"
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"Downgrad"* ]]
 }
 
 @test "same version exits 0 with no-change message" {
     local ver="26.6.260925"
-    local jar="${REPO_ROOT}/jar/autoupgrade.jar"
+    local jar="${AU_JAR_DIR}/autoupgrade.jar"
     local new_jar
     new_jar="$(make_fake_au_jar "${ver}")"
     cp "${new_jar}" "${jar}"
@@ -214,7 +216,7 @@ EOF
         actual_sha="$(shasum -a 256 "${fake}" | cut -d' ' -f1)"
     fi
     run bash "${SCRIPT}" --from "${fake}" --sha256 "${actual_sha}" --no-verify
-    rm -f "${REPO_ROOT}/jar/autoupgrade.jar"
+    rm -f "${AU_JAR_DIR}/autoupgrade.jar"
     [ "${status}" -eq 0 ]
 }
 
@@ -223,7 +225,7 @@ EOF
 # ---------------------------------------------------------------------------
 
 @test "--keep 2 prunes old backups" {
-    local jar_dir="${REPO_ROOT}/jar"
+    local jar_dir="${AU_JAR_DIR}"
     # Create 4 existing backup files
     local i
     for i in 26.4 26.5 26.6 26.7; do
@@ -269,7 +271,7 @@ EOF
     local new_jar
     new_jar="$(make_fake_au_jar "26.6.260925")"
     run bash "${SCRIPT}" --from "${new_jar}" --no-verify
-    rm -f "${REPO_ROOT}/jar/autoupgrade.jar"
+    rm -f "${AU_JAR_DIR}/autoupgrade.jar"
     unset AU_KEYSTORE
 
     [[ "${output}" == *"Re-save recommended"* || "${output}" == *"re-save"* || \
