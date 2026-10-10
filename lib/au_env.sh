@@ -421,16 +421,29 @@ au_set_defaults() {
 
 # ------------------------------------------------------------------------------
 # Function: au_read_pin
-# Purpose.: Read AU_PATCH from the pin file if not already set.
+# Purpose.: Read AU_PATCH from the pin file if not already set by the caller
+#           environment, or if it was set by the profile (pin wins over profile
+#           per design step 7). The caller environment always wins over the pin.
 # Notes...: Pin file is parsed line-by-line (never sourced).
 #           Security: refuse symlink, numeric owner check, refuse g/o-writable.
 #           Only AU_PATCH=<value> accepted; value must match ^[A-Za-z0-9_.,:-]+$
+#           When AU_PATCH is set by the caller (not profile) and a pin file
+#           exists, a WARN is logged naming the pin file.
 # ------------------------------------------------------------------------------
 au_read_pin() {
     _au_patch_pinned=false
-    [[ -n "${AU_PATCH:-}" ]] && return 0
 
     local _patch_env="${AU_DOWNLOAD_FOLDER}/au_patch.env"
+
+    # If AU_PATCH is set and came from caller env (not from profile), do not
+    # override it; warn if a pin file also exists.
+    if [[ -n "${AU_PATCH:-}" && "${_au_patch_from_profile:-false}" != true ]]; then
+        if [[ -f "${_patch_env}" ]]; then
+            log_warn "AU_PATCH set in caller environment; pin file ${_patch_env} not applied (caller wins)"
+        fi
+        return 0
+    fi
+
     [[ -f "${_patch_env}" ]] || return 0
 
     # Security: refuse symlink
@@ -781,6 +794,9 @@ au_check_cfg_mode() {
 # Module-level: path to the selected profile (set by au_find_profile / --profile)
 _AU_PROFILE_PATH=""
 
+# Module-level: set to true when au_apply_profile sets AU_PATCH (pin wins over it)
+_au_patch_from_profile=false
+
 # Allowed keys in a profile file (allow-list; unknown keys are fatal)
 _AU_PROFILE_ALLOWED_KEYS=(
     AU_PROFILE_DESC
@@ -790,6 +806,21 @@ _AU_PROFILE_ALLOWED_KEYS=(
     AU_GOLD_IMAGE
     AU_EDITION
 )
+
+# ------------------------------------------------------------------------------
+# Function: _au_validate_group_name
+# Purpose.: Validate an OS group name: ^[A-Za-z0-9_.-]{1,32}$
+# Args....: $1 - group name value
+#           $2 - variable name (for the error message)
+# Returns.: 0 if valid; exits via die on violation.
+# ------------------------------------------------------------------------------
+_au_validate_group_name() {
+    local _val="$1" _varname="$2"
+    [[ -z "${_val}" ]] && return 0   # empty means unset; callers handle that separately
+    if [[ ! "${_val}" =~ ^[A-Za-z0-9_.-]{1,32}$ ]]; then
+        die "Invalid group name for ${_varname}='${_val}' (must match ^[A-Za-z0-9_.-]{1,32}$)"
+    fi
+}
 
 # ------------------------------------------------------------------------------
 # Function: au_find_profile
@@ -873,31 +904,13 @@ au_apply_profile() {
 
     [[ -f "${_profile_file}" ]] || die "Profile file not found: ${_profile_file}"
 
-    # Security checks (same as Decision-5 env files, but parsed not sourced)
-    local _cur_uid=""
-    _cur_uid=$(id -u 2>/dev/null || true)
-    [[ -z "${_cur_uid}" ]] && die "Profile: cannot determine current uid"
+    # Full Decision-5 security checks: symlink chain per-hop parent check,
+    # numeric uid fail-closed, mode, TOCTOU-safe fd open.
+    _AU_REAL_FD=""
+    _au_check_file_security "${_profile_file}" "profile"
+    # _AU_REAL_FD is now open and pointing to the resolved file.
 
-    # Symlink resolution + owner check
-    local _real=""
-    _real=$(_au_resolve_realpath "${_profile_file}") \
-        || die "Profile: cannot resolve path: ${_profile_file}"
-    [[ -f "${_real}" ]] || die "Profile: resolved to non-regular file: ${_real}"
-
-    local _file_uid=""
-    _file_uid=$(stat -c '%u' "${_real}" 2>/dev/null \
-        || stat -f '%u' "${_real}" 2>/dev/null \
-        || true)
-    if [[ -n "${_file_uid}" && "${_file_uid}" != "0" && "${_file_uid}" != "${_cur_uid}" ]]; then
-        die "Profile: ${_profile_file} owned by uid ${_file_uid} (not root=0 or current=${_cur_uid}), refusing"
-    fi
-
-    # g/o-writable check
-    local _writable_p=""
-    _writable_p=$(find "${_real}" -maxdepth 0 \( -perm -g+w -o -perm -o+w \) 2>/dev/null || true)
-    [[ -n "${_writable_p}" ]] && die "Profile: ${_profile_file} is group/world-writable, refusing"
-
-    # Parse line by line with allow-list
+    # Parse line by line with allow-list; read from the open fd (TOCTOU-safe).
     local _lineno=0 _line _trim _key _val _allowed _ok
     while IFS= read -r _line || [[ -n "${_line}" ]]; do
         _lineno=$(( _lineno + 1 ))
@@ -906,6 +919,7 @@ au_apply_profile() {
         [[ -z "${_trim}" || "${_trim}" == '#'* ]] && continue
 
         if [[ "${_trim}" != *'='* ]]; then
+            exec {_AU_REAL_FD}<&-
             die "Profile ${_profile_file} line ${_lineno}: no '=' separator: ${_trim}"
         fi
 
@@ -926,23 +940,42 @@ au_apply_profile() {
             [[ "${_key}" == "${_allowed}" ]] && _ok=true && break
         done
         if [[ "${_ok}" == false ]]; then
+            exec {_AU_REAL_FD}<&-
             die "Profile ${_profile_file} line ${_lineno}: unknown key '${_key}' (allowed: ${_AU_PROFILE_ALLOWED_KEYS[*]})"
         fi
 
         # Validate specific keys
         case "${_key}" in
             AU_GOLD_IMAGE)
-                [[ "${_val}" =~ ^(YES|NO|AUTO|ALL)$ ]] \
-                    || die "Profile ${_profile_file} line ${_lineno}: AU_GOLD_IMAGE must be YES|NO|AUTO|ALL, got: ${_val}"
+                if [[ ! "${_val}" =~ ^(YES|NO|AUTO|ALL)$ ]]; then
+                    exec {_AU_REAL_FD}<&-
+                    die "Profile ${_profile_file} line ${_lineno}: AU_GOLD_IMAGE must be YES|NO|AUTO|ALL, got: ${_val}"
+                fi
                 ;;
             AU_EDITION)
-                [[ "${_val}" =~ ^(EE|SE2)$ ]] \
-                    || die "Profile ${_profile_file} line ${_lineno}: AU_EDITION must be EE|SE2, got: ${_val}"
+                if [[ ! "${_val}" =~ ^(EE|SE2)$ ]]; then
+                    exec {_AU_REAL_FD}<&-
+                    die "Profile ${_profile_file} line ${_lineno}: AU_EDITION must be EE|SE2, got: ${_val}"
+                fi
+                ;;
+            AU_TARGET_VERSION)
+                if [[ ! "${_val}" =~ ^[0-9]{2}$ ]]; then
+                    exec {_AU_REAL_FD}<&-
+                    die "Profile ${_profile_file} line ${_lineno}: AU_TARGET_VERSION must be a 2-digit number, got: ${_val}"
+                fi
+                ;;
+            AU_PLATFORM)
+                if [[ ! "${_val}" =~ ^[A-Z0-9._]+$ ]]; then
+                    exec {_AU_REAL_FD}<&-
+                    die "Profile ${_profile_file} line ${_lineno}: AU_PLATFORM must match ^[A-Z0-9._]+$, got: ${_val}"
+                fi
                 ;;
             AU_PATCH)
                 # Validate patch value; keywords validated later by au_validate_profile
-                [[ "${_val}" =~ ^[A-Za-z0-9_.,:-]+$ ]] \
-                    || die "Profile ${_profile_file} line ${_lineno}: AU_PATCH contains invalid characters: ${_val}"
+                if [[ ! "${_val}" =~ ^[A-Za-z0-9_.,:-]+$ ]]; then
+                    exec {_AU_REAL_FD}<&-
+                    die "Profile ${_profile_file} line ${_lineno}: AU_PATCH contains invalid characters: ${_val}"
+                fi
                 ;;
         esac
 
@@ -950,8 +983,13 @@ au_apply_profile() {
         # We apply unconditionally here and the caller snapshot is restored in
         # au_load_config step 4 to enforce caller-wins.
         export "${_key}=${_val}"
+        # Track when profile sets AU_PATCH so the pin file can override it (design step 7)
+        [[ "${_key}" == "AU_PATCH" ]] && _au_patch_from_profile=true
         log_debug "Profile: ${_key}=${_val}"
-    done < "${_real}"
+    done < "/dev/fd/${_AU_REAL_FD}"
+
+    # Close the fd on normal exit
+    exec {_AU_REAL_FD}<&-
 
     log_info "Profile loaded: ${_profile_file}"
 }
@@ -1133,6 +1171,8 @@ au_derive_groups_from_config_c() {
             *) continue ;;
         esac
         _ngroups=$((_ngroups + 1))
+        # Validate group name from config.c before use
+        _au_validate_group_name "${_val}" "${_var}"
         # A value set by the caller or a config file wins over the source home
         [[ -n "${!_var:-}" ]] && continue
         export "${_var}=${_val}"

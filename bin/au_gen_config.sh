@@ -428,6 +428,7 @@ do_work() {
     # Target home (decision 9)
     local _oracle_base_for_name="${AU_SOURCE_HOME:+}"
     if [[ -n "${OPT_SOURCE_HOME}" && -x "${OPT_SOURCE_HOME}/bin/orabase" ]]; then
+        _au_check_binary_trust "${OPT_SOURCE_HOME}/bin/orabase" "orabase"
         _oracle_base_for_name=$("${OPT_SOURCE_HOME}/bin/orabase" 2>/dev/null || true)
         [[ -n "${_oracle_base_for_name}" ]] || \
             log_warn "orabase returned empty; falling back to AU_ORACLE_BASE for home naming"

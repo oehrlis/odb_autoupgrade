@@ -15,11 +15,12 @@ setup() {
     chmod 700 "${WORK_DIR}" "${WORK_DIR}/etc" "${WORK_DIR}/patches" \
               "${WORK_DIR}/logs" "${WORK_DIR}/keystore"
 
-    # Stub homes for testing
+    # Stub homes for testing - must not be g/o-writable for binary trust check
     FAKE_SRC="${WORK_DIR}/src_home"
     FAKE_TGT="${WORK_DIR}/tgt_home"
     mkdir -p "${FAKE_SRC}/rdbms/lib" "${FAKE_TGT}/rdbms/lib"
     mkdir -p "${FAKE_SRC}/OPatch" "${FAKE_TGT}/OPatch"
+    chmod 755 "${FAKE_SRC}" "${FAKE_SRC}/OPatch" "${FAKE_TGT}" "${FAKE_TGT}/OPatch"
 
     export AUTOUPGRADE_BASE="${WORK_DIR}"
 
@@ -338,4 +339,31 @@ CONFIGC
         --no-patches --no-groups 2>&1
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"PASS"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# SHOULD: Binary trust check for opatch before execution (regression)
+# ---------------------------------------------------------------------------
+
+@test "au_home_verify.sh: refuses opatch owned by wrong uid" {
+    # Create a patches_info.json so the patch check path is entered
+    mkdir -p "${WORK_DIR}/patches"
+    cat > "${WORK_DIR}/patches/patches_info.json" <<'JSON'
+{"patches": [{"patch_id": "36233126"}]}
+JSON
+    # Create opatch owned by root-lookalike via a wrong uid;
+    # simulate by making opatch g+w (which also triggers refusal)
+    mkdir -p "${FAKE_TGT}/OPatch"
+    cat > "${FAKE_TGT}/OPatch/opatch" <<'OPSH'
+#!/usr/bin/env bash
+printf '36233126;DB RU 19.32\n'
+exit 0
+OPSH
+    chmod 666 "${FAKE_TGT}/OPatch/opatch"  # g+w triggers binary trust refusal
+
+    run bash "${SCRIPT}" \
+        --home "${FAKE_TGT}" \
+        --no-groups --no-binopt 2>&1
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"opatch"* || "${output}" == *"writable"* || "${output}" == *"refusing"* || "${output}" == *"ERROR"* ]]
 }

@@ -229,4 +229,83 @@ au_home_target_name() {
     printf '%s_%s\n' "${_base_path}" "${_n}"
 }
 
+# =============================================================================
+# BINARY TRUST AND ZIP SAFETY
+# =============================================================================
+
+# ------------------------------------------------------------------------------
+# Function: _au_check_binary_trust
+# Purpose.: Refuse to execute a binary from an Oracle home that is not owned by
+#           the current user or root (numeric uid), or whose containing directory
+#           is group/world-writable.  Dies with a named error on violation.
+# Args....: $1 - path to the binary
+#           $2 - label (for the error message, e.g. "opatch")
+# Returns.: 0 if trusted; exits via die on violation.
+# Notes...: Numeric uid is used to avoid locale-dependent name lookups.
+# ------------------------------------------------------------------------------
+_au_check_binary_trust() {
+    local _bin="$1" _label="${2:-binary}"
+    local _cur_uid=""
+    _cur_uid=$(id -u 2>/dev/null || true)
+    [[ -z "${_cur_uid}" ]] && die "${_label}: cannot determine current uid"
+
+    [[ -f "${_bin}" ]] || die "${_label}: not found: ${_bin}"
+    [[ -x "${_bin}" ]] || die "${_label}: not executable: ${_bin}"
+
+    # Numeric owner check
+    local _bin_uid=""
+    _bin_uid=$(stat -c '%u' "${_bin}" 2>/dev/null \
+        || stat -f '%u' "${_bin}" 2>/dev/null \
+        || true)
+    if [[ -z "${_bin_uid}" ]]; then
+        die "${_label}: cannot determine owner of ${_bin} (stat failed), refusing"
+    fi
+    if [[ "${_bin_uid}" != "0" && "${_bin_uid}" != "${_cur_uid}" ]]; then
+        die "${_label}: ${_bin} owned by uid ${_bin_uid} (not root=0 or current=${_cur_uid}), refusing"
+    fi
+
+    # Directory must not be group/world-writable
+    local _dir="${_bin%/*}"
+    [[ "${_dir}" == "${_bin}" || -z "${_dir}" ]] && _dir="."
+    local _writable=""
+    _writable=$(find "${_dir}" -maxdepth 0 \( -perm -g+w -o -perm -o+w \) 2>/dev/null || true)
+    if [[ -n "${_writable}" ]]; then
+        die "${_label}: directory ${_dir} is group/world-writable, refusing to execute ${_bin}"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Function: _au_check_zip_slip
+# Purpose.: List zip entries and refuse any starting with '/' or containing '..'.
+#           Uses `unzip -Z1` (or `zipinfo -1` as fallback) to list without
+#           extracting.  Warns and continues if neither tool can list entries.
+# Args....: $1 - path to the zip file
+# Returns.: 0 if safe; exits via die on a zip-slip entry.
+# ------------------------------------------------------------------------------
+_au_check_zip_slip() {
+    local _zip="$1"
+    local _list_out=""
+    if _list_out=$(unzip -Z1 "${_zip}" 2>/dev/null); then
+        : # use _list_out from unzip -Z1
+    elif _list_out=$(zipinfo -1 "${_zip}" 2>/dev/null); then
+        : # use _list_out from zipinfo -1
+    else
+        log_warn "zip slip check: cannot list entries of ${_zip} (unzip -Z1 / zipinfo -1 unavailable), continuing"
+        return 0
+    fi
+
+    local _entry
+    while IFS= read -r _entry; do
+        [[ -z "${_entry}" ]] && continue
+        if [[ "${_entry}" == /* ]]; then
+            die "zip slip: absolute path entry in ${_zip}: ${_entry}"
+        fi
+        case "${_entry}" in
+            ../*)   die "zip slip: path traversal entry in ${_zip}: ${_entry}" ;;
+            */../*) die "zip slip: path traversal entry in ${_zip}: ${_entry}" ;;
+            */..)   die "zip slip: path traversal entry in ${_zip}: ${_entry}" ;;
+        esac
+    done <<< "${_list_out}"
+}
+
 # au_home.sh loaded (v0.6.0)

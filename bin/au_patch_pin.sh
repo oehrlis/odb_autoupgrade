@@ -51,6 +51,14 @@ RESOLVE_MRP=false
 DRY_RUN=false
 FOLDER=""
 
+# Allow-list regex copied from lib/au_env.sh au_read_pin - do NOT edit lib to sync
+readonly _AU_PATCH_ALLOWLIST_RE='^[A-Za-z0-9_.,:-]+$'
+# Known keyword base names (optional :version suffix allowed for RU/RECOMMENDED/OJVM)
+readonly _AU_PATCH_KEYWORD_RE='^(RU|RECOMMENDED|OPATCH|OJVM|DPBP|MRP|CSPU|JDK|OCW|AU|GI)(:[0-9]+(\.[0-9]+){0,4})?$'
+readonly _AU_PATCH_NUMBER_RE='^[0-9]+$'
+readonly _AU_RELUPDATE_RE='^[0-9]+(\.[0-9]+){1,4}$'
+readonly _AU_PATCHID_RE='^[0-9]+$'
+
 # =============================================================================
 # FUNCTIONS
 # =============================================================================
@@ -184,6 +192,12 @@ _au_read_patches_info() {
         exit 1
     fi
 
+    # Validate releaseUpdate to prevent injection (must be a dot-separated version)
+    if [[ ! "${_ru_full}" =~ ${_AU_RELUPDATE_RE} ]]; then
+        log_error "Invalid releaseUpdate value in patches_info.json (injection risk): '${_ru_full}'"
+        exit 1
+    fi
+
     _PI_RU_VERSION="$(_au_version_short "${_ru_full}")"
     log_debug "Parsed releaseUpdate: ${_ru_full} -> ${_PI_RU_VERSION}"
 
@@ -195,6 +209,12 @@ _au_read_patches_info() {
         '.patches[] | select((.description // "" | ascii_downcase | contains("monthly recommended")) and (.releaseUpdate == null or .releaseUpdate == "")) | .patchId | tostring' \
         'next((str(p["patchId"]) for p in d["patches"] if "monthly recommended" in (p.get("description") or "").lower() and not p.get("releaseUpdate")), None)' \
         "${_json_file}" | head -1 || true)"
+
+    # Validate MRP patchId to prevent injection (must be digits only)
+    if [[ -n "${_mrp_id}" ]] && [[ ! "${_mrp_id}" =~ ${_AU_PATCHID_RE} ]]; then
+        log_error "Invalid MRP patchId in patches_info.json (injection risk): '${_mrp_id}'"
+        exit 1
+    fi
 
     _PI_MRP_PATCHID="${_mrp_id}"
     [[ -n "${_PI_MRP_PATCHID}" ]] && log_debug "MRP patchId: ${_PI_MRP_PATCHID}"
@@ -264,6 +284,41 @@ _au_build_pinned_value() {
 }
 
 # ------------------------------------------------------------------------------
+# Function: _au_validate_pin_value
+# Purpose.: Validate the final AU_PATCH value before writing.
+#           Applies the allow-list regex from lib/au_env.sh au_read_pin and
+#           checks every comma-separated element is a known keyword or plain number.
+# Args....: $1 - AU_PATCH value to validate
+# Returns.: 0 if valid; exits 1 naming the bad value
+# ------------------------------------------------------------------------------
+_au_validate_pin_value() {
+    local _val="$1"
+
+    # Allow-list from lib/au_env.sh au_read_pin (copied constant; do not edit lib)
+    if [[ ! "${_val}" =~ ${_AU_PATCH_ALLOWLIST_RE} ]]; then
+        log_error "AU_PATCH value '${_val}' fails allow-list check (^[A-Za-z0-9_.,:-]+$)"
+        exit 1
+    fi
+
+    # Per-element: must be a known keyword (with optional :version) or plain number
+    local _saved_IFS="${IFS}"
+    IFS=',' read -ra _elems <<< "${_val}"
+    IFS="${_saved_IFS}"
+    local _elem
+    for _elem in "${_elems[@]}"; do
+        if [[ "${_elem}" =~ ${_AU_PATCH_KEYWORD_RE} ]] || \
+           [[ "${_elem}" =~ ${_AU_PATCH_NUMBER_RE} ]]; then
+            continue
+        fi
+        log_error "AU_PATCH element '${_elem}' is neither a known keyword nor a plain patch number"
+        log_error "  Known keywords: RU, RECOMMENDED, OPATCH, OJVM, DPBP, MRP, CSPU, JDK, OCW, AU, GI"
+        log_error "  Keywords may carry a version suffix: KEYWORD:x.y (RU, RECOMMENDED, OJVM)"
+        log_error "  Full AU_PATCH value: '${_val}'"
+        exit 1
+    done
+}
+
+# ------------------------------------------------------------------------------
 # Function: _au_write_pin
 # Purpose.: Write (or check) the pin file.
 # Args....: $1 - pin file path
@@ -274,8 +329,14 @@ _au_write_pin() {
     local _pin_file="$1"
     local _new_val="$2"
 
+    # Refuse to overwrite a symlink at any path position
+    if [[ -L "${_pin_file}" ]]; then
+        log_error "Pin file is a symlink; refusing to overwrite: ${_pin_file}"
+        exit 1
+    fi
+
     # Conflict check
-    if [[ -f "${_pin_file}" && ! -L "${_pin_file}" ]]; then
+    if [[ -f "${_pin_file}" ]]; then
         local _existing=""
         # Read current pin value (same parser as au_read_pin)
         local _line _trim _val
@@ -316,9 +377,11 @@ _au_write_pin() {
         return 0
     fi
 
-    # Write the pin file atomically via a temp file
-    local _tmp
+    # Write the pin file atomically via a temp file; clean up on any exit
+    local _tmp=""
     _tmp="$(mktemp "${_pin_file}.XXXXXX")"
+    # shellcheck disable=SC2064
+    trap "rm -f '${_tmp}'" EXIT INT TERM
     cat > "${_tmp}" <<PINFILE
 # au_patch.env - AutoUpgrade patch pin file
 # Written by au_patch_pin.sh on $(date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -387,6 +450,9 @@ main() {
     # Build new pinned value
     local _new_pin
     _new_pin="$(_au_build_pinned_value "${_current_patch}" "${_PI_RU_VERSION}" "${_PI_MRP_PATCHID:-}")"
+
+    # Validate the final value before writing
+    _au_validate_pin_value "${_new_pin}"
 
     log_info "AU_PATCH (before): ${_current_patch}"
     log_info "RU version:        ${_PI_RU_VERSION}"

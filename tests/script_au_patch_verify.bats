@@ -248,3 +248,206 @@ JSONEOF
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"not found"* || "${output}" == *"ERROR"* ]]
 }
+
+@test "au_patch_verify.sh: malformed JSON -> exit 1 (parser error)" {
+    local folder="${WORK_DIR}/patches/badjson"
+    mkdir -p "${folder}"
+    printf 'THIS IS NOT JSON\n' > "${folder}/patches_info.json"
+    touch "${folder}/bug-map.json"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        bash '${SCRIPT}' '${folder}' 2>&1
+    "
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"parse"* || "${output}" == *"ERROR"* || "${output}" == *"error"* || "${output}" == *"Failed"* ]]
+}
+
+@test "au_patch_verify.sh: zero file entries in patches_info.json -> exit 1" {
+    local folder="${WORK_DIR}/patches/nofiles"
+    mkdir -p "${folder}"
+    touch "${folder}/bug-map.json"
+    printf '{"patchFolder":"%s","generatedAt":"2024-01-01T00:00:00Z","patches":[{"description":"Empty","patchId":99,"files":[]}]}\n' \
+        "${folder}" > "${folder}/patches_info.json"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        bash '${SCRIPT}' '${folder}' 2>&1
+    "
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"No file entries"* || "${output}" == *"ERROR"* ]]
+}
+
+@test "au_patch_verify.sh: entry with neither SHA-256 nor checksum-256 -> exit 1 naming entry" {
+    local folder="${WORK_DIR}/patches/nochecksum"
+    mkdir -p "${folder}"
+    echo "content" > "${folder}/test.zip"
+    touch "${folder}/bug-map.json"
+    cat > "${folder}/patches_info.json" <<JSONEOF
+{
+  "patchFolder": "${folder}",
+  "generatedAt": "2024-01-01T00:00:00Z",
+  "patches": [
+    {
+      "description": "Test",
+      "patchId": 12345,
+      "releaseUpdate": "19.28.0.0.0",
+      "files": [
+        {
+          "name": "test.zip",
+          "size": 8
+        }
+      ]
+    }
+  ]
+}
+JSONEOF
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        bash '${SCRIPT}' '${folder}' 2>&1
+    "
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"test.zip"* ]]
+    [[ "${output}" == *"NO-CHECKSUM"* || "${output}" == *"neither"* || "${output}" == *"checksum"* ]]
+}
+
+@test "au_patch_verify.sh: entry name with slash -> exit 1 naming the entry" {
+    local folder="${WORK_DIR}/patches/slashname"
+    mkdir -p "${folder}"
+    touch "${folder}/bug-map.json"
+    cat > "${folder}/patches_info.json" <<JSONEOF
+{
+  "patchFolder": "${folder}",
+  "generatedAt": "2024-01-01T00:00:00Z",
+  "patches": [
+    {
+      "description": "Test",
+      "patchId": 12345,
+      "releaseUpdate": "19.28.0.0.0",
+      "files": [
+        {
+          "name": "../../etc/passwd",
+          "SHA-256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "size": 10
+        }
+      ]
+    }
+  ]
+}
+JSONEOF
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        bash '${SCRIPT}' '${folder}' 2>&1
+    "
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"INVALID NAME"* || "${output}" == *"invalid"* || "${output}" == *"basename"* ]]
+}
+
+@test "au_patch_verify.sh: entry name starting with dot -> exit 1 naming the entry" {
+    local folder="${WORK_DIR}/patches/dotname"
+    mkdir -p "${folder}"
+    touch "${folder}/bug-map.json"
+    cat > "${folder}/patches_info.json" <<JSONEOF
+{
+  "patchFolder": "${folder}",
+  "generatedAt": "2024-01-01T00:00:00Z",
+  "patches": [
+    {
+      "description": "Test",
+      "patchId": 12345,
+      "releaseUpdate": "19.28.0.0.0",
+      "files": [
+        {
+          "name": ".hidden_file",
+          "SHA-256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "size": 10
+        }
+      ]
+    }
+  ]
+}
+JSONEOF
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        bash '${SCRIPT}' '${folder}' 2>&1
+    "
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"INVALID NAME"* || "${output}" == *"invalid"* || "${output}" == *".hidden_file"* ]]
+}
+
+@test "au_patch_verify.sh: entry name with pipe -> exit 1 (pipe is field separator, parse corrupts name)" {
+    local folder="${WORK_DIR}/patches/pipename"
+    mkdir -p "${folder}"
+    touch "${folder}/bug-map.json"
+    # Build JSON with pipe in name using printf to avoid shell interpretation.
+    # The pipe is the internal field separator: the name is split and the resulting
+    # truncated name cannot be found -> MISSING -> exit 1.
+    printf '{"patchFolder":"%s","generatedAt":"2024-01-01T00:00:00Z","patches":[{"description":"Test","patchId":12345,"releaseUpdate":"19.28.0.0.0","files":[{"name":"bad|name.zip","SHA-256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":10}]}]}\n' \
+        "${folder}" > "${folder}/patches_info.json"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        bash '${SCRIPT}' '${folder}' 2>&1
+    "
+    # pipe corrupts the field split -> MISSING or INVALID NAME, either way exit 1
+    [ "${status}" -eq 1 ]
+}
+
+@test "au_patch_verify.sh: listed file is symlink -> exit 1 naming it" {
+    local folder="${WORK_DIR}/patches/listedsymlink"
+    mkdir -p "${folder}"
+    echo "real content" > "${WORK_DIR}/real_file.zip"
+    ln -s "${WORK_DIR}/real_file.zip" "${folder}/patch.zip"
+    touch "${folder}/bug-map.json"
+    local size=13
+    cat > "${folder}/patches_info.json" <<JSONEOF
+{
+  "patchFolder": "${folder}",
+  "generatedAt": "2024-01-01T00:00:00Z",
+  "patches": [
+    {
+      "description": "Test",
+      "patchId": 12345,
+      "releaseUpdate": "19.28.0.0.0",
+      "files": [
+        {
+          "name": "patch.zip",
+          "SHA-256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "size": ${size}
+        }
+      ]
+    }
+  ]
+}
+JSONEOF
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        bash '${SCRIPT}' '${folder}' 2>&1
+    "
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"patch.zip"* ]]
+    [[ "${output}" == *"SYMLINK"* || "${output}" == *"symlink"* ]]
+}
+
+@test "au_patch_verify.sh: unlisted symlink is reported by name" {
+    local folder="${WORK_DIR}/patches/unlistedsym"
+    mkdir -p "${folder}"
+    echo "real" > "${folder}/listed.zip"
+    local sha
+    sha=$(file_sha256 "${folder}/listed.zip")
+    local size
+    size=$(stat -c '%s' "${folder}/listed.zip" 2>/dev/null || stat -f '%z' "${folder}/listed.zip")
+    make_single_patch_info "${folder}" "listed.zip" "${sha}" "${size}"
+    # Create an unlisted symlink in the folder
+    ln -s "${folder}/listed.zip" "${folder}/unlisted_link.zip"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        bash '${SCRIPT}' '${folder}' 2>&1
+    "
+    # Symlink should be reported, not silently skipped
+    [[ "${output}" == *"unlisted_link.zip"* || "${output}" == *"UNLISTED"* ]]
+}
+
+@test "au_patch_verify.sh: --help mentions transfer integrity not authenticity" {
+    run bash "${SCRIPT}" --help
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"integrity"* ]]
+    [[ "${output}" == *"authenticity"* ]]
+}

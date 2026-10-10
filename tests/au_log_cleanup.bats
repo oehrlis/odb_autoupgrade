@@ -318,10 +318,11 @@ teardown() {
 }
 
 @test "au_log_cleanup.sh: refuses when autoupgrade is running" {
-    # Replace the pgrep stub with one that reports AU as running
+    # Replace the pgrep stub with one that reports AU as running (output a fake PID)
     cat > "${WORK_DIR}/stubs/pgrep" <<'STUB'
 #!/usr/bin/env bash
-# Simulate autoupgrade running
+# Simulate java autoupgrade.jar running under a different PID
+printf '99999\n'
 exit 0
 STUB
     chmod +x "${WORK_DIR}/stubs/pgrep"
@@ -334,4 +335,104 @@ STUB
     run bash -c "AU_LOG_DIR='${LOG_DIR}' '${WORK_SCRIPT}' --unknown-flag 2>&1"
     [ "${status}" -ne 0 ]
     [[ "${output}" == *"Unknown option"* ]]
+}
+
+# =============================================================================
+# Security regression tests (MUST 1, MUST 2, SHOULD)
+# =============================================================================
+
+# MUST 1(c) - Oracle binary check
+@test "au_logs_validate_dir: refuses log dir containing Oracle binary (bin/oracle)" {
+    local oracle_dir="${WORK_DIR}/oracle_like"
+    mkdir -p "${oracle_dir}/cfgtoollogs/patch/auto"
+    mkdir -p "${oracle_dir}/product/19c/dbhome_1/bin"
+    touch "${oracle_dir}/product/19c/dbhome_1/bin/oracle"
+    run bash -c "
+        source '${REPO_ROOT}/lib/common.sh'
+        source '${LIB}'
+        AU_LOG_DIR='${oracle_dir}'
+        au_logs_validate_dir 2>&1
+    "
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"Oracle Home"* ]] || [[ "${output}" == *"oracle"* ]]
+}
+
+@test "au_log_cleanup.sh: refuses log dir containing Oracle binary (integration)" {
+    local oracle_dir="${WORK_DIR}/oracle_like"
+    mkdir -p "${oracle_dir}/cfgtoollogs/patch/auto"
+    mkdir -p "${oracle_dir}/product/19c/dbhome_1/bin"
+    touch "${oracle_dir}/product/19c/dbhome_1/bin/oracle"
+    run bash -c "AU_LOG_DIR='${oracle_dir}' '${WORK_SCRIPT}' 2>&1"
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"Oracle Home"* ]] || [[ "${output}" == *"oracle"* ]]
+    # Verify nothing was deleted
+    [ -f "${oracle_dir}/product/19c/dbhome_1/bin/oracle" ]
+}
+
+# MUST 1(a) - trailing slash canonicalization preserves keep-set
+@test "au_log_cleanup.sh: trailing slash on AU_LOG_DIR preserves keep-set" {
+    run bash -c "AU_LOG_DIR='${LOG_DIR}/' '${WORK_SCRIPT}' --older-than 0 --delete --yes 2>&1"
+    [ "${status}" -eq 0 ]
+    [ -f "${LOG_DIR}/cfgtoollogs/patch/auto/aru/request_id_cache.json" ]
+    [ -f "${LOG_DIR}/cfgtoollogs/patch/auto/aru/abc123.csd" ]
+    [ -f "${LOG_DIR}/cfgtoollogs/patch/auto/lock/au.lock" ]
+}
+
+# MUST 1(d) - log dir = parent of AU_DOWNLOAD_FOLDER must be refused
+@test "au_logs_validate_dir: refuses when log dir contains AU_DOWNLOAD_FOLDER" {
+    local dl_dir="${LOG_DIR}/downloads"
+    mkdir -p "${dl_dir}"
+    run bash -c "
+        source '${REPO_ROOT}/lib/common.sh'
+        source '${LIB}'
+        AU_LOG_DIR='${LOG_DIR}'
+        AU_DOWNLOAD_FOLDER='${dl_dir}'
+        au_logs_validate_dir 2>&1
+    "
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"AU_DOWNLOAD_FOLDER"* ]]
+}
+
+# MUST 2 - process detection uses java.*autoupgrade.jar pattern; own PID excluded
+@test "au_logs_is_au_running: not running when pgrep returns no PIDs" {
+    # Default setup stub exits 1 (no output) - AU not running
+    run bash -c "
+        source '${REPO_ROOT}/lib/common.sh'
+        source '${LIB}'
+        au_logs_is_au_running && echo RUNNING || echo NOT_RUNNING
+    "
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"NOT_RUNNING"* ]]
+}
+
+@test "au_logs_is_au_running: running when pgrep returns a non-self PID" {
+    # Stub pgrep returns a foreign PID (not the current process)
+    cat > "${WORK_DIR}/stubs/pgrep" <<'STUB'
+#!/usr/bin/env bash
+printf '99999\n'
+exit 0
+STUB
+    chmod +x "${WORK_DIR}/stubs/pgrep"
+    run bash -c "
+        export PATH='${WORK_DIR}/stubs:\${PATH}'
+        source '${REPO_ROOT}/lib/common.sh'
+        source '${LIB}'
+        au_logs_is_au_running && echo RUNNING || echo NOT_RUNNING
+    "
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"RUNNING"* ]]
+}
+
+# MUST 1(b) - tighter marker check: cfgtoollogs/patch/auto required
+@test "au_logs_validate_dir: refuses dir with only top-level cfgtoollogs (no patch/auto)" {
+    local shallow_dir="${WORK_DIR}/shallow_cfg"
+    mkdir -p "${shallow_dir}/cfgtoollogs"
+    run bash -c "
+        source '${REPO_ROOT}/lib/common.sh'
+        source '${LIB}'
+        AU_LOG_DIR='${shallow_dir}'
+        au_logs_validate_dir 2>&1
+    "
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"does not look like"* ]]
 }

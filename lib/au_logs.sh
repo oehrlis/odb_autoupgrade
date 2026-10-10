@@ -4,8 +4,8 @@
 # ------------------------------------------------------------------------------
 # Module.....: au_logs.sh
 # Author.....: Stefan Oehrli (oes) stefan.oehrli@oradba.ch
-# Date.......: 2026.10.09
-# Version....: v0.6.0
+# Date.......: 2026.10.10
+# Version....: v0.7.0
 # Purpose....: Log-cleanup helper functions for AutoUpgrade wrapper scripts.
 #              Provides: au_logs_validate_dir, au_logs_is_au_running,
 #              au_logs_in_keep_set, au_logs_sorted_job_dirs, au_logs_do_cleanup.
@@ -16,6 +16,11 @@
 # ------------------------------------------------------------------------------
 # Modified...:
 # 2026.10.09 oehrli - initial version (WP8)
+# 2026.10.10 oehrli - security hardening: canonicalize log dir, tighter AU
+#                     marker (cfgtoollogs/patch/auto or upgrade/auto), Oracle
+#                     binary detection, dangerous-path guard, TOCTOU-safe
+#                     deletion, java.*autoupgrade.jar-only process detection,
+#                     named empty-dir prune (WP8)
 # ------------------------------------------------------------------------------
 
 # Guard on function existence.
@@ -28,9 +33,13 @@ declare -F au_logs_validate_dir >/dev/null 2>&1 && return 0
 # ------------------------------------------------------------------------------
 # Function: au_logs_validate_dir
 # Purpose.: Validate that AU_LOG_DIR is safe to operate on.
-#           Refuses: unset, '/', $HOME, not owned by current user,
-#           not a directory, no cfgtoollogs/ subdirectory or .ap_build.
-# Args....: None (reads AU_LOG_DIR from environment)
+#           Refuses: unset, not resolvable, '/', $HOME, not owned by current
+#           user, not a directory, no cfgtoollogs/patch/auto or
+#           cfgtoollogs/upgrade/auto subdirectory, contains Oracle Home or
+#           inventory markers, equals or is ancestor/descendant of
+#           ORACLE_BASE/ORACLE_HOME/AUTOUPGRADE_BASE/AU_DOWNLOAD_FOLDER/
+#           AU_KEYSTORE. Every refusal names the reason.
+# Args....: None (reads AU_LOG_DIR from environment; updates it with canonical)
 # Returns.: 0 on success; exits via die() on failure
 # ------------------------------------------------------------------------------
 au_logs_validate_dir() {
@@ -38,32 +47,86 @@ au_logs_validate_dir() {
         die "AU_LOG_DIR is not set. Set it in your environment or config file."
     fi
 
-    # Refuse dangerous roots
+    # Early refusal of filesystem root before any canonicalization.
+    # Stripping trailing slashes on "/" produces "" which cd treats as $HOME.
     if [[ "${AU_LOG_DIR}" == "/" ]]; then
         die "AU_LOG_DIR must not be / (filesystem root)."
     fi
 
-    local real_home="${HOME:-}"
-    if [[ -n "${real_home}" && "${AU_LOG_DIR}" == "${real_home}" ]]; then
-        die "AU_LOG_DIR must not equal \$HOME (${real_home})."
-    fi
-
-    # Must be an existing directory
+    # Must be an existing directory before we attempt canonicalization.
     if [[ ! -d "${AU_LOG_DIR}" ]]; then
         die "AU_LOG_DIR does not exist or is not a directory: ${AU_LOG_DIR}"
     fi
 
+    # Canonicalise: strip trailing slashes, resolve symlinks and . / ..
+    local raw_dir canon_dir
+    raw_dir="${AU_LOG_DIR%/}"
+    [[ -z "${raw_dir}" ]] && raw_dir="${AU_LOG_DIR}"  # safety for bare "/"
+    canon_dir=$(cd -P "${raw_dir}" 2>/dev/null && pwd -P) || true
+    if [[ -z "${canon_dir}" ]]; then
+        die "AU_LOG_DIR cannot be resolved to a real path: ${AU_LOG_DIR}"
+    fi
+    AU_LOG_DIR="${canon_dir}"
+
+    # Post-canonicalization: also catch symlinks pointing at root
+    if [[ "${AU_LOG_DIR}" == "/" ]]; then
+        die "AU_LOG_DIR must not be / (filesystem root)."
+    fi
+
+    # Refuse $HOME
+    local real_home
+    real_home=$(cd -P "${HOME:-/}" 2>/dev/null && pwd -P) || real_home="${HOME:-}"
+    if [[ -n "${real_home}" && "${AU_LOG_DIR}" == "${real_home}" ]]; then
+        die "AU_LOG_DIR must not equal \$HOME (${real_home})."
+    fi
+
     # Must be owned by the current user (portable: try GNU then BSD stat)
     local owner
-    owner=$(stat -c '%U' "${AU_LOG_DIR}" 2>/dev/null || stat -f '%Su' "${AU_LOG_DIR}" 2>/dev/null || true)
+    owner=$(stat -c '%U' "${AU_LOG_DIR}" 2>/dev/null \
+        || stat -f '%Su' "${AU_LOG_DIR}" 2>/dev/null || true)
     if [[ -n "${owner}" && "${owner}" != "$(id -un)" ]]; then
         die "AU_LOG_DIR is owned by '${owner}', not '$(id -un)'. Refusing."
     fi
 
-    # Must look like an AutoUpgrade log dir
-    if [[ ! -d "${AU_LOG_DIR}/cfgtoollogs" && ! -e "${AU_LOG_DIR}/.ap_build" ]]; then
-        die "AU_LOG_DIR does not look like an AutoUpgrade log directory (no cfgtoollogs/ or .ap_build): ${AU_LOG_DIR}"
+    # Must contain an AutoUpgrade-specific subdirectory.
+    # cfgtoollogs/ alone is too broad; require the deep AU path.
+    if [[ ! -d "${AU_LOG_DIR}/cfgtoollogs/patch/auto" && \
+          ! -d "${AU_LOG_DIR}/cfgtoollogs/upgrade/auto" ]]; then
+        die "AU_LOG_DIR does not look like an AutoUpgrade log directory (no cfgtoollogs/patch/auto or cfgtoollogs/upgrade/auto): ${AU_LOG_DIR}"
     fi
+
+    # Refuse if tree contains Oracle Home or inventory markers (bounded search).
+    # read stops at first match; -maxdepth 6 limits scan cost.
+    local oracle_marker=""
+    read -r oracle_marker < <(find -P "${AU_LOG_DIR}" -maxdepth 6 \
+        \( -path "*/bin/oracle" \
+           -o -path "*/inventory/ContentsXML" \
+           -o -name "oraInst.loc" \) \
+        -print 2>/dev/null) || true
+    if [[ -n "${oracle_marker}" ]]; then
+        die "AU_LOG_DIR contains Oracle Home or inventory markers (${oracle_marker}). Refusing to avoid deleting Oracle binaries."
+    fi
+
+    # Refuse if log dir equals or contains (is ancestor of) dangerous paths.
+    # Also refuse if log dir is inside a dangerous path.
+    local danger_var danger_path canon_danger
+    for danger_var in ORACLE_BASE ORACLE_HOME AUTOUPGRADE_BASE \
+                      AU_DOWNLOAD_FOLDER AU_KEYSTORE; do
+        # shellcheck disable=SC2299
+        danger_path="${!danger_var:-}"
+        [[ -z "${danger_path}" ]] && continue
+        [[ ! -e "${danger_path}" ]] && continue
+        canon_danger=$(cd -P "${danger_path}" 2>/dev/null && pwd -P) || true
+        [[ -z "${canon_danger}" ]] && continue
+
+        if [[ "${AU_LOG_DIR}" == "${canon_danger}" ]]; then
+            die "AU_LOG_DIR (${AU_LOG_DIR}) equals \$${danger_var} (${canon_danger}). Refusing."
+        fi
+        # log dir is ancestor of danger_path (danger_path is inside log dir)
+        if [[ "${canon_danger}" == "${AU_LOG_DIR}/"* ]]; then
+            die "AU_LOG_DIR (${AU_LOG_DIR}) contains \$${danger_var} (${canon_danger}). Refusing."
+        fi
+    done
 
     log_debug "au_logs_validate_dir: ${AU_LOG_DIR} passed validation"
 }
@@ -74,17 +137,39 @@ au_logs_validate_dir() {
 
 # ------------------------------------------------------------------------------
 # Function: au_logs_is_au_running
-# Purpose.: Check whether autoupgrade is currently running for the current user.
+# Purpose.: Check whether autoupgrade.jar is running as a java process for the
+#           current user. Excludes the current process ($$).
+#           pgrep pattern: 'java.*autoupgrade\.jar'
+#           ps fallback uses the same pattern via bash regex.
 # Args....: None
 # Returns.: 0 if running, 1 if not
 # ------------------------------------------------------------------------------
 au_logs_is_au_running() {
+    local self_pid="$$"
+    local pid line
+
     if command -v pgrep >/dev/null 2>&1; then
-        pgrep -u "$(id -u)" -f "autoupgrade" >/dev/null 2>&1
+        # Match only java processes running autoupgrade.jar; exclude self
+        while IFS= read -r pid; do
+            [[ -z "${pid}" ]] && continue
+            [[ "${pid}" == "${self_pid}" ]] && continue
+            return 0
+        done < <(pgrep -u "$(id -u)" -f 'java.*autoupgrade\.jar' 2>/dev/null || true)
+        return 1
     else
-        # pgrep not available; fall back to ps - SC2009 suppressed intentionally
+        # pgrep not available; fall back to ps
         # shellcheck disable=SC2009
-        ps -u "$(id -u)" -f 2>/dev/null | grep -q "[a]utoupgrade"
+        while IFS= read -r line; do
+            [[ -z "${line}" ]] && continue
+            local ppid pargs
+            ppid="${line%%[[:space:]]*}"
+            pargs="${line#*[[:space:]]}"
+            [[ "${ppid}" == "${self_pid}" ]] && continue
+            if [[ "${pargs}" =~ java.*autoupgrade\.jar ]]; then
+                return 0
+            fi
+        done < <(ps -o pid=,args= -u "$(id -u)" 2>/dev/null || true)
+        return 1
     fi
 }
 
@@ -144,7 +229,8 @@ au_logs_sorted_job_dirs() {
         if [[ ! -f "${dir}/status.json" && ! -f "${dir}/progress.json" ]]; then
             continue
         fi
-        mtime=$(stat -c '%Y' "${dir}" 2>/dev/null || stat -f '%m' "${dir}" 2>/dev/null || echo 0)
+        mtime=$(stat -c '%Y' "${dir}" 2>/dev/null \
+            || stat -f '%m' "${dir}" 2>/dev/null || echo 0)
         printf '%s\t%s\n' "${mtime}" "${dir}"
     done < <(find "${log_dir}" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null) \
         | sort -rn | while IFS=$'\t' read -r _ path; do printf '%s\n' "${path}"; done
@@ -158,8 +244,9 @@ au_logs_sorted_job_dirs() {
 # Function: au_logs_do_cleanup
 # Purpose.: List or delete files from AU_LOG_DIR per the cleanup rules.
 #           Every file is accounted for: KEEP (with reason) or DELETE.
-#           No silent filters.
-# Args....: $1 - log_dir   (AU_LOG_DIR, validated)
+#           No silent filters. Deletion is TOCTOU-safe (re-validated via find -P
+#           at delete time). Empty directories are named before removal.
+# Args....: $1 - log_dir   (AU_LOG_DIR, validated canonical path)
 #           $2 - older_than (days, files newer than this are kept)
 #           $3 - keep_jobs  (N newest job dirs to preserve)
 #           $4 - do_delete  ("true" = delete; "false" = list only)
@@ -235,7 +322,7 @@ au_logs_do_cleanup() {
             continue
         fi
 
-        # --- Age check (files only; directories are handled by empty-dir prune) ---
+        # --- Age check (files only; directories handled by empty-dir prune) ---
         if [[ ! -f "${entry}" ]]; then
             continue
         fi
@@ -253,7 +340,15 @@ au_logs_do_cleanup() {
 
         # --- Delete or list ---
         if [[ "${do_delete}" == "true" ]]; then
-            rm -f "${entry}"
+            # TOCTOU-safe deletion: re-validate at delete time via find -P.
+            # -type f excludes symlinks; -mtime re-checks age; -P prevents
+            # symlink traversal in the parent directory.
+            local entry_dir entry_name
+            entry_dir="${entry%/*}"
+            entry_name="${entry##*/}"
+            find -P "${entry_dir}" -maxdepth 1 \
+                -name "${entry_name}" -type f \
+                -mtime "+${older_than}" -delete 2>/dev/null || true
             log_info "DELETE: ${rel}"
         else
             printf 'WOULD DELETE: %s\n' "${rel}"
@@ -261,11 +356,16 @@ au_logs_do_cleanup() {
         (( AU_LOGS_DELETED++ )) || true
     done < <(find -P "${log_dir}" -xdev -print0 2>/dev/null | sort -z)
 
-    # After deletion: prune empty dirs (never cfgtoollogs or .autoupgrade tree)
+    # After deletion: prune empty dirs (never cfgtoollogs or .autoupgrade tree).
+    # Name each directory before removal - no silent filter.
     if [[ "${do_delete}" == "true" ]]; then
-        find -P "${log_dir}" -mindepth 1 -depth -type d -empty \
+        local empty_dir
+        while IFS= read -r -d '' empty_dir; do
+            log_info "PRUNE [empty-dir]: ${empty_dir#"${log_dir}/"}"
+            rmdir "${empty_dir}" 2>/dev/null || true
+        done < <(find -P "${log_dir}" -mindepth 1 -depth -type d -empty \
             ! -path "${log_dir}/cfgtoollogs*" \
             ! -path "${log_dir}/.autoupgrade*" \
-            -delete 2>/dev/null || true
+            -print0 2>/dev/null)
     fi
 }

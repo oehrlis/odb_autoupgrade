@@ -13,6 +13,8 @@ setup() {
     setup_helper
     LIB="${REPO_ROOT}/lib/au_lib.sh"
     export LOG_LEVEL=4   # quiet by default; tests override when needed
+    # Security check compliance: WORK_DIR must not be group/world-writable
+    chmod 700 "${WORK_DIR}"
 }
 
 teardown() {
@@ -536,4 +538,228 @@ PROF
         au_check_group_membership 2>&1
     "
     [ "${status}" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# MUST: au_apply_profile - full Decision-5 security checks (regression)
+# ---------------------------------------------------------------------------
+
+@test "au_apply_profile: profile in g+w dir -> refused" {
+    local safe_dir="${WORK_DIR}/safe_profiles"
+    local bad_dir="${WORK_DIR}/bad_profiles"
+    mkdir -p "${safe_dir}" "${bad_dir}"
+    # Make the parent dir group-writable
+    chmod 775 "${bad_dir}"
+    local pfile="${bad_dir}/insecure.profile"
+    cat > "${pfile}" <<'PROF'
+AU_PROFILE_DESC="insecure"
+AU_PATCH=RECOMMENDED
+PROF
+    chmod 644 "${pfile}"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        source '${LIB}'
+        au_apply_profile '${pfile}' 2>&1
+    "
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"writable"* || "${output}" == *"refusing"* || "${output}" == *"ERROR"* ]]
+}
+
+@test "au_apply_profile: symlinked profile via 777 hop -> refused" {
+    local real_dir="${WORK_DIR}/real_profiles"
+    local hop_dir="${WORK_DIR}/hop_dir_777"
+    mkdir -p "${real_dir}" "${hop_dir}"
+    chmod 777 "${hop_dir}"
+    local real_file="${real_dir}/real.profile"
+    cat > "${real_file}" <<'PROF'
+AU_PROFILE_DESC="real"
+AU_PATCH=RECOMMENDED
+PROF
+    chmod 644 "${real_file}"
+    # Symlink: profiles/via_hop.profile -> hop_dir_777/link_target.profile -> real.profile
+    ln -s "${real_file}" "${hop_dir}/link_target.profile"
+    mkdir -p "${WORK_DIR}/profiles"
+    chmod 700 "${WORK_DIR}/profiles"
+    ln -s "${hop_dir}/link_target.profile" "${WORK_DIR}/profiles/via_hop.profile"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        source '${LIB}'
+        au_apply_profile '${WORK_DIR}/profiles/via_hop.profile' 2>&1
+    "
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"writable"* || "${output}" == *"refusing"* || "${output}" == *"ERROR"* ]]
+}
+
+@test "au_apply_profile: stat stub returning empty -> refused" {
+    # Override stat in PATH so it returns nothing (simulates stat failure)
+    local stub_dir="${WORK_DIR}/stat_stubs"
+    mkdir -p "${stub_dir}"
+    chmod 700 "${stub_dir}"
+    # Stub that exits 0 but prints nothing (empty output = fail-closed)
+    cat > "${stub_dir}/stat" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+    chmod +x "${stub_dir}/stat"
+    local pfile="${WORK_DIR}/test.profile"
+    cat > "${pfile}" <<'PROF'
+AU_PROFILE_DESC="test"
+AU_PATCH=RECOMMENDED
+PROF
+    chmod 644 "${pfile}"
+    run bash -c "
+        export PATH='${stub_dir}:${PATH}'
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        source '${LIB}'
+        au_apply_profile '${pfile}' 2>&1
+    "
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"stat"* || "${output}" == *"owner"* || "${output}" == *"refusing"* || "${output}" == *"ERROR"* ]]
+}
+
+@test "au_apply_profile: normal profile in safe dir -> applied" {
+    local pdir="${WORK_DIR}/safe_dir"
+    mkdir -p "${pdir}"
+    chmod 700 "${pdir}"
+    local pfile="${pdir}/normal.profile"
+    cat > "${pfile}" <<'PROF'
+AU_PROFILE_DESC="safe"
+AU_PATCH=RU:19.32,OPATCH
+AU_TARGET_VERSION=19
+AU_PLATFORM=LINUX.X64
+AU_GOLD_IMAGE=NO
+PROF
+    chmod 644 "${pfile}"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        source '${LIB}'
+        au_apply_profile '${pfile}'
+        echo \"PATCH=\${AU_PATCH}\"
+    " 2>&1
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"PATCH=RU:19.32,OPATCH"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# SHOULD: Pin vs profile precedence
+# ---------------------------------------------------------------------------
+
+@test "au_read_pin: pin wins over profile AU_PATCH" {
+    mkdir -p "${WORK_DIR}/patches"
+    chmod 700 "${WORK_DIR}/patches"
+    printf 'AU_PATCH=RU:19.32,OPATCH\n' > "${WORK_DIR}/patches/au_patch.env"
+    chmod 600 "${WORK_DIR}/patches/au_patch.env"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        source '${LIB}'
+        # Simulate profile having set AU_PATCH and the flag
+        export AU_PATCH=RECOMMENDED
+        _au_patch_from_profile=true
+        export AU_DOWNLOAD_FOLDER='${WORK_DIR}/patches'
+        au_read_pin
+        echo \"PATCH=\${AU_PATCH}\"
+        echo \"PINNED=\${_au_patch_pinned}\"
+    " 2>&1
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"PATCH=RU:19.32,OPATCH"* ]]
+    [[ "${output}" == *"PINNED=true"* ]]
+}
+
+@test "au_read_pin: caller env AU_PATCH is not overridden by pin, warns" {
+    mkdir -p "${WORK_DIR}/patches"
+    chmod 700 "${WORK_DIR}/patches"
+    printf 'AU_PATCH=RU:19.32,OPATCH\n' > "${WORK_DIR}/patches/au_patch.env"
+    chmod 600 "${WORK_DIR}/patches/au_patch.env"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        source '${LIB}'
+        export AU_PATCH=RECOMMENDED
+        _au_patch_from_profile=false
+        export AU_DOWNLOAD_FOLDER='${WORK_DIR}/patches'
+        au_read_pin
+        echo \"PATCH=\${AU_PATCH}\"
+    " 2>&1
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"PATCH=RECOMMENDED"* ]]
+    [[ "${output}" == *"caller"* || "${output}" == *"WARN"* || "${output}" == *"pin"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# SHOULD: Profile value validation
+# ---------------------------------------------------------------------------
+
+@test "au_apply_profile: invalid AU_TARGET_VERSION -> exit 1" {
+    local pdir="${WORK_DIR}/val_dir"
+    mkdir -p "${pdir}"
+    chmod 700 "${pdir}"
+    local pfile="${pdir}/badver.profile"
+    cat > "${pfile}" <<'PROF'
+AU_PROFILE_DESC="bad version"
+AU_PATCH=RECOMMENDED
+AU_TARGET_VERSION=1920
+PROF
+    chmod 644 "${pfile}"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        source '${LIB}'
+        au_apply_profile '${pfile}' 2>&1
+    "
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"AU_TARGET_VERSION"* || "${output}" == *"2-digit"* || "${output}" == *"ERROR"* ]]
+}
+
+@test "au_apply_profile: invalid AU_PLATFORM -> exit 1" {
+    local pdir="${WORK_DIR}/plat_dir"
+    mkdir -p "${pdir}"
+    chmod 700 "${pdir}"
+    local pfile="${pdir}/badplat.profile"
+    cat > "${pfile}" <<'PROF'
+AU_PROFILE_DESC="bad platform"
+AU_PATCH=RECOMMENDED
+AU_TARGET_VERSION=19
+AU_PLATFORM=linux.x64
+PROF
+    chmod 644 "${pfile}"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        source '${LIB}'
+        au_apply_profile '${pfile}' 2>&1
+    "
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"AU_PLATFORM"* || "${output}" == *"ERROR"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# SHOULD: Group name validation
+# ---------------------------------------------------------------------------
+
+@test "_au_validate_group_name: valid group name passes" {
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        source '${LIB}'
+        _au_validate_group_name 'dba' 'AU_GROUP_OSDBA'
+        echo 'OK'
+    " 2>&1
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"OK"* ]]
+}
+
+@test "_au_validate_group_name: too-long group name -> exit 1" {
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        source '${LIB}'
+        _au_validate_group_name 'this_group_name_is_way_too_long_xyz' 'AU_GROUP_OSDBA' 2>&1
+    "
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"Invalid"* || "${output}" == *"ERROR"* ]]
+}
+
+@test "_au_validate_group_name: special chars -> exit 1" {
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        source '${LIB}'
+        _au_validate_group_name 'dba;evil' 'AU_GROUP_OSDBA' 2>&1
+    "
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"Invalid"* || "${output}" == *"ERROR"* ]]
 }

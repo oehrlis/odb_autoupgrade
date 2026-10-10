@@ -190,3 +190,65 @@ JSON
     [ "${status}" -eq 0 ]
     grep -q '19.28' "${WORK_DIR}/patches/au_patch.env"
 }
+
+# ---------------------------------------------------------------------------
+# MUST 4: injection / validation tests
+# ---------------------------------------------------------------------------
+
+@test "au_patch_pin.sh: releaseUpdate injection '19.28,12345678,OJVM:19.1' -> refused" {
+    cp "${FIXTURE_DIR}/patches_info_inject_ru.json" "${WORK_DIR}/patches/patches_info.json"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        export AU_PATCH=RECOMMENDED
+        bash '${SCRIPT}' '${WORK_DIR}/patches' 2>&1
+    "
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"Invalid releaseUpdate"* || "${output}" == *"injection"* || "${output}" == *"ERROR"* ]]
+}
+
+@test "au_patch_pin.sh: patchId injection '1,RU:18.1' -> refused" {
+    cp "${FIXTURE_DIR}/patches_info_inject_patchid.json" "${WORK_DIR}/patches/patches_info.json"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        export AU_PATCH=RU,MRP
+        bash '${SCRIPT}' --resolve-mrp '${WORK_DIR}/patches' 2>&1
+    "
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"Invalid MRP patchId"* || "${output}" == *"injection"* || "${output}" == *"ERROR"* ]]
+}
+
+@test "au_patch_pin.sh: valid fixtures still pin successfully (RECOMMENDED)" {
+    make_patches_info_recommended "${WORK_DIR}/patches"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        export AU_PATCH=RECOMMENDED
+        bash '${SCRIPT}' '${WORK_DIR}/patches' 2>&1
+    "
+    [ "${status}" -eq 0 ]
+    grep -q 'AU_PATCH=RECOMMENDED:19.32' "${WORK_DIR}/patches/au_patch.env"
+}
+
+@test "au_patch_pin.sh: valid fixtures still pin successfully (RU,OPATCH,OJVM)" {
+    make_patches_info "${WORK_DIR}/patches"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        export AU_PATCH=RU,OPATCH,OJVM
+        bash '${SCRIPT}' '${WORK_DIR}/patches' 2>&1
+    "
+    [ "${status}" -eq 0 ]
+    grep -q 'AU_PATCH=RU:19.28,OPATCH,OJVM' "${WORK_DIR}/patches/au_patch.env"
+}
+
+@test "au_patch_pin.sh: conflict detection refuses to overwrite a symlink pin file" {
+    make_patches_info_recommended "${WORK_DIR}/patches"
+    # Create a real file and symlink the pin file to it
+    printf 'AU_PATCH=RECOMMENDED:19.27\n' > "${WORK_DIR}/real_pin.env"
+    ln -s "${WORK_DIR}/real_pin.env" "${WORK_DIR}/patches/au_patch.env"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        export AU_PATCH=RECOMMENDED
+        bash '${SCRIPT}' '${WORK_DIR}/patches' 2>&1
+    "
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"symlink"* || "${output}" == *"SYMLINK"* || "${output}" == *"refusing"* ]]
+}

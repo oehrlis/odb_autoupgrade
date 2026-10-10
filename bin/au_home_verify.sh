@@ -286,6 +286,7 @@ PYEOF
         log_warn "OPatch not found: ${_opatch}; skipping patch check"
         return 0
     fi
+    _au_check_binary_trust "${_opatch}" "opatch"
 
     local _installed_ids
     _installed_ids=$("${_opatch}" lspatches 2>/dev/null | \

@@ -18,9 +18,10 @@ setup() {
     cp "${REPO_ROOT}/etc/au_patch.cfg" "${WORK_DIR}/etc/au_patch.cfg"
     chmod 600 "${WORK_DIR}/etc/au_patch.cfg"
 
-    # Fake Oracle homes
+    # Fake Oracle homes - must not be g/o-writable for binary trust check
     FAKE_SRC="${WORK_DIR}/src_home"
     mkdir -p "${FAKE_SRC}/rdbms/lib" "${FAKE_SRC}/bin"
+    chmod 755 "${FAKE_SRC}" "${FAKE_SRC}/bin"
 
     export AUTOUPGRADE_BASE="${WORK_DIR}"
     export AU_ORACLE_BASE="${WORK_DIR}/oracle_base"

@@ -22,9 +22,10 @@ setup() {
     export AU_ORACLE_BASE="${WORK_DIR}/oracle_base"
     export AU_EDITION="EE"
 
-    # Fake Oracle Home
+    # Fake Oracle Home - must have non-g/o-writable dirs for binary trust check
     FAKE_OH="${WORK_DIR}/fake_oh"
     mkdir -p "${FAKE_OH}/rdbms/lib" "${FAKE_OH}/OPatch"
+    chmod 755 "${FAKE_OH}" "${FAKE_OH}/OPatch"
 
     # Destination for gold images
     DEST_DIR="${WORK_DIR}/images"
@@ -49,6 +50,7 @@ _make_runinstaller_stub() {
     local _home="$1"
     local _zip_name="${2:-db_goldimage_19.32.0.0.zip}"
     mkdir -p "${_home}"
+    chmod 755 "${_home}"
     cat > "${_home}/runInstaller" <<RISTUB
 #!/usr/bin/env bash
 # Mocked runInstaller: creates a fake zip in -destinationLocation
@@ -102,7 +104,12 @@ SHA256STUB
 _make_unzip_stub() {
     cat > "${STUB_DIR}/unzip" <<'UZSTUB'
 #!/usr/bin/env bash
-# Mocked unzip: creates a minimal fake Oracle home structure in -d target
+# Mocked unzip: handles -Z1 (list entries) and -q (extract)
+# -Z1: print clean entries (no path traversal) and exit
+if [[ "$1" == "-Z1" ]]; then
+    printf 'oracle/bin/oracle\noracle/lib/libclntsh.so\n'
+    exit 0
+fi
 _zip=""
 _dest=""
 while [[ $# -gt 0 ]]; do
@@ -115,6 +122,7 @@ while [[ $# -gt 0 ]]; do
 done
 if [[ -n "${_dest}" ]]; then
     mkdir -p "${_dest}"
+    chmod 755 "${_dest}"
     # Create a minimal runInstaller stub in target
     cat > "${_dest}/runInstaller" <<'INNER'
 #!/usr/bin/env bash
@@ -344,4 +352,95 @@ _make_test_zip() {
         --oracle-base "${WORK_DIR}/oracle_base" 2>&1
     [ "${status}" -ne 0 ]
     [[ "${output}" == *"empty"* ]] || [[ "${output}" == *"exist"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# SHOULD: OSDBA_GROUP written independently of inventory group (regression)
+# ---------------------------------------------------------------------------
+
+@test "au_goldimage.sh: --install writes OSDBA_GROUP without inventory group" {
+    _make_test_zip "${DEST_DIR}" "osdba_test.zip"
+    local _zip="${DEST_DIR}/osdba_test.zip"
+    _make_sha256sum_stub
+    printf 'aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899  osdba_test.zip\n' \
+        > "${_zip}.sha256"
+    _make_unzip_stub
+
+    local _tgt="${WORK_DIR}/osdba_oh"
+    # Capture the response file content by providing --response-file
+    local _rsp="${WORK_DIR}/out.rsp"
+    # No inventory group set; OSDBA_GROUP must still appear
+    run bash "${SCRIPT}" --install "${_zip}" \
+        --target "${_tgt}" \
+        --oracle-base "${WORK_DIR}/oracle_base" \
+        --edition EE \
+        --response "${_rsp}" 2>&1
+    [ "${status}" -eq 0 ]
+    # Response file must contain OSDBA_GROUP even when no inventory group
+    [[ -f "${_rsp}" && "$(grep -c 'OSDBA_GROUP' "${_rsp}")" -ge 1 ]] || \
+        [[ "${output}" == *"OSDBA_GROUP"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# SHOULD: Zip-slip check (regression)
+# ---------------------------------------------------------------------------
+
+@test "au_goldimage.sh: --install refuses zip with absolute path entry" {
+    # Create a stub unzip that lists absolute paths via -Z1
+    cat > "${STUB_DIR}/unzip" <<'UZSTUB'
+#!/usr/bin/env bash
+if [[ "$1" == "-Z1" ]]; then
+    printf '/etc/passwd\nnormal/file.txt\n'
+    exit 0
+fi
+exit 0
+UZSTUB
+    chmod +x "${STUB_DIR}/unzip"
+
+    # Also need zipinfo -1 to fail so unzip -Z1 is used
+    cat > "${STUB_DIR}/zipinfo" <<'ZI'
+#!/usr/bin/env bash
+exit 1
+ZI
+    chmod +x "${STUB_DIR}/zipinfo"
+
+    _make_test_zip "${DEST_DIR}" "slip_test.zip"
+    local _zip="${DEST_DIR}/slip_test.zip"
+    _make_sha256sum_stub
+    printf 'aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899  slip_test.zip\n' \
+        > "${_zip}.sha256"
+
+    local _tgt="${WORK_DIR}/slip_oh"
+    run bash "${SCRIPT}" --install "${_zip}" \
+        --target "${_tgt}" \
+        --oracle-base "${WORK_DIR}/oracle_base" \
+        --edition EE 2>&1
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"slip"* || "${output}" == *"absolute"* || "${output}" == *"path"* || "${output}" == *"ERROR"* ]]
+}
+
+@test "au_goldimage.sh: --install refuses zip with dotdot path entry" {
+    cat > "${STUB_DIR}/unzip" <<'UZSTUB'
+#!/usr/bin/env bash
+if [[ "$1" == "-Z1" ]]; then
+    printf '../evil.sh\nnormal/file.txt\n'
+    exit 0
+fi
+exit 0
+UZSTUB
+    chmod +x "${STUB_DIR}/unzip"
+
+    _make_test_zip "${DEST_DIR}" "dotdot_test.zip"
+    local _zip="${DEST_DIR}/dotdot_test.zip"
+    _make_sha256sum_stub
+    printf 'aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899  dotdot_test.zip\n' \
+        > "${_zip}.sha256"
+
+    local _tgt="${WORK_DIR}/dotdot_oh"
+    run bash "${SCRIPT}" --install "${_zip}" \
+        --target "${_tgt}" \
+        --oracle-base "${WORK_DIR}/oracle_base" \
+        --edition EE 2>&1
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"slip"* || "${output}" == *"traversal"* || "${output}" == *"ERROR"* ]]
 }

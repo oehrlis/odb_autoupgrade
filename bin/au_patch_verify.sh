@@ -77,6 +77,8 @@ ARGUMENTS:
 EXIT CODES:
   0  All checks passed
   1  One or more checks failed
+
+NOTE: Hashes come from the same patches_info.json file; they prove transfer integrity, not authenticity.
 HELP
     exit 0
 }
@@ -119,7 +121,7 @@ _au_parse_patches_info() {
                  else "" end),
                 (.size | tostring)
             ] | join("|")
-        ' "${_json}" 2>/dev/null || true
+        ' "${_json}"
     elif command -v python3 >/dev/null 2>&1; then
         python3 -I -c "
 import json, sys
@@ -131,7 +133,7 @@ for patch in d.get('patches', []):
         sha256 = f.get('SHA-256') or f.get('checksum-256') or ''
         size = str(f.get('size', ''))
         print('|'.join([name, sha256, size]))
-" "${_json}" 2>/dev/null || true
+" "${_json}"
     else
         log_error "Neither jq nor python3 available; cannot parse patches_info.json"
         exit 1
@@ -184,17 +186,58 @@ verify_folder() {
     fi
 
     # -------------------------------------------------------------------------
-    # Parse patches_info.json and build a list of expected files
+    # Parse patches_info.json - fail hard if parser fails
+    # -------------------------------------------------------------------------
+    local _parse_output=""
+    _parse_output="$(_au_parse_patches_info "${_json}")" || {
+        log_error "Failed to parse patches_info.json (parser error): ${_json}"
+        exit 1
+    }
+
+    # Count file entries; fail if none found
+    local _entry_count=0
+    local _l
+    while IFS= read -r _l; do
+        [[ -n "${_l}" ]] && _entry_count=$(( _entry_count + 1 ))
+    done <<< "${_parse_output}"
+
+    if [[ "${_entry_count}" -eq 0 ]]; then
+        log_error "No file entries found in patches_info.json: ${_json}"
+        exit 1
+    fi
+
+    # -------------------------------------------------------------------------
+    # Verify each listed file
     # -------------------------------------------------------------------------
     local -a _expected_names=()
-    local _name _sha256_exp _size_exp _record
+    local _name _sha256_exp _size_exp
 
     log_info "Verifying files listed in patches_info.json..."
     while IFS='|' read -r _name _sha256_exp _size_exp; do
         [[ -z "${_name}" ]] && continue
+
+        # --- Name safety check: reject injection-prone names ---
+        if [[ -z "${_name}" ]] || \
+           [[ "${_name}" == */* ]] || \
+           [[ "${_name}" == .* ]] || \
+           [[ "${_name}" == *'|'* ]] || \
+           [[ "${_name}" == *$'\n'* ]]; then
+            log_error "  INVALID NAME in patches_info.json: '${_name}' (must be a plain basename with no /, leading dot, or control chars)"
+            _VERIFY_FAIL=true
+            continue
+        fi
+
         _expected_names+=("${_name}")
 
         local _filepath="${_folder}/${_name}"
+
+        # Symlinks are refused for listed files
+        if [[ -L "${_filepath}" ]]; then
+            log_error "  SYMLINK: '${_name}' is a symlink; a regular file is required"
+            _VERIFY_FAIL=true
+            continue
+        fi
+
         if [[ ! -f "${_filepath}" ]]; then
             log_error "  MISSING: ${_name}"
             _VERIFY_FAIL=true
@@ -213,9 +256,10 @@ verify_folder() {
             log_debug "  size OK: ${_name} (${_actual_size:-?} bytes)"
         fi
 
-        # SHA-256 check
+        # SHA-256 check - both fields absent is an error, not a warning
         if [[ -z "${_sha256_exp}" ]]; then
-            log_warn "  NO SHA-256: ${_name} - no checksum in patches_info.json, skipping hash check"
+            log_error "  NO-CHECKSUM: '${_name}' - entry has neither SHA-256 nor checksum-256 in patches_info.json"
+            _VERIFY_FAIL=true
         else
             local _actual_sha256=""
             _actual_sha256="$(_au_sha256sum "${_filepath}")"
@@ -232,10 +276,11 @@ verify_folder() {
                 log_info "  OK  ${_name}"
             fi
         fi
-    done < <(_au_parse_patches_info "${_json}")
+    done <<< "${_parse_output}"
 
     # -------------------------------------------------------------------------
-    # Check for extra files in the folder not listed in patches_info.json
+    # Check for extra files in the folder not listed in patches_info.json.
+    # Include symlinks so they are named rather than silently skipped.
     # -------------------------------------------------------------------------
     log_info "Checking for unlisted files..."
     local _any_unlisted=false
@@ -253,7 +298,7 @@ verify_folder() {
             log_warn "  UNLISTED: ${_basename} (not in patches_info.json)"
             _any_unlisted=true
         fi
-    done < <(find "${_folder}" -maxdepth 1 -type f 2>/dev/null)
+    done < <(find "${_folder}" -maxdepth 1 \( -type f -o -type l \) 2>/dev/null)
 
     if [[ "${_any_unlisted}" == false ]]; then
         log_info "No unlisted files found."

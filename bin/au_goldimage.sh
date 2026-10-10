@@ -340,6 +340,9 @@ do_create() {
     log_info "Creating gold image from: ${OPT_HOME}"
     log_info "Destination directory: ${OPT_DEST}"
 
+    local _runinstaller_bin="${OPT_HOME}/runInstaller"
+    _au_check_binary_trust "${_runinstaller_bin}" "runInstaller"
+
     local -a _cmd=(
         "${OPT_HOME}/runInstaller"
         -silent
@@ -495,7 +498,11 @@ do_install() {
     # Step 3: Create target directory
     _run_cmd mkdir -p "${OPT_TARGET}"
 
-    # Step 4: Unzip into target home
+    # Step 4: Zip-slip check before unzip
+    log_info "Checking zip entries for path traversal..."
+    _au_check_zip_slip "${OPT_ZIP}"
+
+    # Unzip into target home
     log_info "Unzipping gold image into target home..."
     _run_cmd unzip -q "${OPT_ZIP}" -d "${OPT_TARGET}"
 
@@ -519,7 +526,8 @@ do_install() {
             printf 'ORACLE_BASE=%s\n' "${_obase}"
             printf 'oracle.install.db.InstallEdition=%s\n' "${_edition}"
             [[ -n "${_inv_loc}" ]] && printf 'INVENTORY_LOCATION=%s\n' "${_inv_loc}"
-            [[ -n "${_inv_grp}" ]] && printf 'oracle.install.db.OSDBA_GROUP=%s\n' "${AU_GROUP_OSDBA:-dba}"
+            [[ -n "${_inv_grp}" ]] && printf 'oracle.install.db.inventory_group=%s\n' "${_inv_grp}"
+            printf 'oracle.install.db.OSDBA_GROUP=%s\n' "${AU_GROUP_OSDBA:-dba}"
             [[ -n "${AU_GROUP_OSOPER:-}" ]] && printf 'oracle.install.db.OSOPER_GROUP=%s\n' "${AU_GROUP_OSOPER}"
             [[ -n "${AU_GROUP_OSBACKUPDBA:-}" ]] && printf 'oracle.install.db.OSBACKUPDBA_GROUP=%s\n' "${AU_GROUP_OSBACKUPDBA}"
             [[ -n "${AU_GROUP_OSDGDBA:-}" ]] && printf 'oracle.install.db.OSDGDBA_GROUP=%s\n' "${AU_GROUP_OSDGDBA}"
@@ -530,9 +538,12 @@ do_install() {
         log_debug "Response file written: ${_rsp_file}"
     fi
 
-    # Step 6: Run runInstaller
+    # Step 6: Run runInstaller (trust check before execution; skipped in dry-run)
     local _runinstaller="${OPT_TARGET}/runInstaller"
     [[ -x "${_runinstaller}" ]] || _runinstaller="${OPT_TARGET}/oui/bin/runInstaller"
+    if [[ "${DRY_RUN}" != "true" ]]; then
+        _au_check_binary_trust "${_runinstaller}" "runInstaller (install)"
+    fi
 
     local -a _ri_cmd=(
         "${_runinstaller}"
