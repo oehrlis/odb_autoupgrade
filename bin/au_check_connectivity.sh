@@ -443,7 +443,7 @@ au_check_jar() {
         return 0
     fi
     local version file_date
-    version="$(au_jar_version "${JAR_FILE}")"
+    version="$(au_jar_version "${JAR_FILE}" 2>/dev/null || true)"
     version="${version:-unknown}"
     file_date=$(stat -c '%y' "${JAR_FILE}" 2>/dev/null | cut -d' ' -f1) \
         || file_date=$(stat -f '%Sm' -t '%Y-%m-%d' "${JAR_FILE}" 2>/dev/null) \
