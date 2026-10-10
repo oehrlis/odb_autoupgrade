@@ -58,12 +58,8 @@ setup() {
     export AUTOUPGRADE_BASE="${WORK_DIR}"
     # Create minimal lib layout in WORK_DIR so SCRIPT can bootstrap
     mkdir -p "${WORK_DIR}/lib"
-    cp "${REPO_ROOT}/lib/common.sh" "${WORK_DIR}/lib/"
-    cp "${REPO_ROOT}/lib/au_lib.sh" "${WORK_DIR}/lib/"
-    cp "${REPO_ROOT}/lib/au_env.sh" "${WORK_DIR}/lib/"
-    cp "${REPO_ROOT}/lib/au_net.sh" "${WORK_DIR}/lib/"
-    cp "${REPO_ROOT}/lib/au_tools.sh" "${WORK_DIR}/lib/"
-    cp "${REPO_ROOT}/lib/au_logs.sh" "${WORK_DIR}/lib/"
+    # Copy every library module so the loader finds all of them
+    cp "${REPO_ROOT}"/lib/*.sh "${WORK_DIR}/lib/"
     mkdir -p "${WORK_DIR}/bin"
     cp "${REPO_ROOT}/bin/au_log_cleanup.sh" "${WORK_DIR}/bin/"
     chmod +x "${WORK_DIR}/bin/au_log_cleanup.sh"

@@ -580,9 +580,9 @@ au_check_cfg_vars() {
     done < <(
         {
             grep -oE '\$[{][A-Za-z_][A-Za-z0-9_]*[}]' <<< "${filtered}" \
-                | sed -e 's/^\$[{]//' -e 's/[}]$//'
+                | sed -e 's/^\$[{]//' -e 's/[}]$//' || true
             grep -oE '\$[A-Za-z_][A-Za-z0-9_]*' <<< "${filtered}" \
-                | sed 's/^\$//'
+                | sed 's/^\$//' || true
         } 2>/dev/null | sort -u
     )
 
@@ -1098,7 +1098,6 @@ _AU_DEFAULT_GROUP_OSKMDBA="kmdba"
 _AU_DEFAULT_GROUP_OSRACDBA="racdba"
 
 # SS_* field names in config.c -> AU_GROUP_* mapping
-_AU_CONFIG_C_FIELDS=(SS_DBA_GRP SS_OPER_GRP SS_BKP_GRP SS_DGD_GRP SS_KMT_GRP SS_RAC_GRP)
 _AU_GROUP_VARS=(AU_GROUP_OSDBA AU_GROUP_OSOPER AU_GROUP_OSBACKUPDBA AU_GROUP_OSDGDBA AU_GROUP_OSKMDBA AU_GROUP_OSRACDBA)
 
 # ------------------------------------------------------------------------------
@@ -1113,34 +1112,36 @@ _AU_GROUP_VARS=(AU_GROUP_OSDBA AU_GROUP_OSOPER AU_GROUP_OSBACKUPDBA AU_GROUP_OSD
 au_derive_groups_from_config_c() {
     local _config_c="$1"
     [[ -f "${_config_c}" ]] || { log_warn "config.c not found: ${_config_c}"; return 0; }
+    if ! declare -F au_home_read_groups >/dev/null; then
+        log_warn "Groups: lib/au_home.sh not loaded; AU_GROUP_* not derived from ${_config_c}"
+        return 0
+    fi
 
-    local _i _field _var _val _line _trim
-    for _i in "${!_AU_CONFIG_C_FIELDS[@]}"; do
-        _field="${_AU_CONFIG_C_FIELDS[_i]}"
-        _var="${_AU_GROUP_VARS[_i]}"
-        # Skip if already set by caller
+    # Single parser for the real format (#define SS_DBA_GRP "dba") lives in
+    # au_home.sh; map its home_settings key names to the AU_GROUP_* variables
+    local _kv _key _val _var _ngroups=0
+    while IFS= read -r _kv; do
+        _key="${_kv%%=*}"
+        _val="${_kv#*=}"
+        case "${_key}" in
+            osdba_group) _var="AU_GROUP_OSDBA" ;;
+            osoper_group) _var="AU_GROUP_OSOPER" ;;
+            osbackupdba_group) _var="AU_GROUP_OSBACKUPDBA" ;;
+            osdgdba_group) _var="AU_GROUP_OSDGDBA" ;;
+            oskmdba_group) _var="AU_GROUP_OSKMDBA" ;;
+            osracdba_group) _var="AU_GROUP_OSRACDBA" ;;
+            *) continue ;;
+        esac
+        _ngroups=$((_ngroups + 1))
+        # A value set by the caller or a config file wins over the source home
         [[ -n "${!_var:-}" ]] && continue
+        export "${_var}=${_val}"
+        log_info "Groups: ${_var}=${_val} (from ${_config_c})"
+    done < <(au_home_read_groups "${_config_c}" 2>/dev/null || true)
 
-        # Search for the field in config.c
-        _val=""
-        while IFS= read -r _line; do
-            _trim="${_line#"${_line%%[![:space:]]*}"}"
-            _trim="${_trim%"${_trim##*[![:space:]]}"}"
-            if [[ "${_trim}" == "${_field}="* ]]; then
-                _val="${_trim#*=}"
-                _val="${_val#"${_val%%[![:space:]]*}"}"
-                _val="${_val%"${_val##*[![:space:]]}"}"
-                break
-            fi
-        done < "${_config_c}"
-
-        if [[ -n "${_val}" ]]; then
-            export "${_var}=${_val}"
-            log_debug "Groups: ${_var}=${_val} (from config.c)"
-        else
-            log_debug "Groups: ${_field} not found in config.c; ${_var} remains unset"
-        fi
-    done
+    if [[ "${_ngroups}" -eq 0 ]]; then
+        log_warn "Groups: no SS_*_GRP defines found in ${_config_c}; AU_GROUP_* not derived"
+    fi
 }
 
 # ------------------------------------------------------------------------------
