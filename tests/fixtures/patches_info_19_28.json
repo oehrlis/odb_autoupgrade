@@ -1,0 +1,57 @@
+{
+  "patchFolder": "/patches/recommended",
+  "generatedAt": "2024-10-15T08:00:00Z",
+  "patches": [
+    {
+      "description": "DATABASE RELEASE UPDATE 19.28.0.0.0",
+      "platform": "LINUX.X64",
+      "releaseUpdate": "19.28.0.0.0",
+      "patchId": 36912597,
+      "releasedDate": "2024-10-01",
+      "files": [
+        {
+          "name": "p36912597_190000_Linux-x86-64.zip",
+          "SHA-256": "aabbcc0011223344556677889900aabb1122334455667788990011aabbcc0011",
+          "size": 1234567890
+        }
+      ]
+    },
+    {
+      "description": "OJVM RELEASE UPDATE 19.28.0.0.0",
+      "platform": "LINUX.X64",
+      "releaseUpdate": "19.28.0.0.0",
+      "patchId": 36870693,
+      "files": [
+        {
+          "name": "p36870693_190000_Linux-x86-64.zip",
+          "SHA-256": "1122334455667788990011aabbcc0011aabbcc0011223344556677889900aabb",
+          "size": 23456789
+        }
+      ]
+    },
+    {
+      "description": "OPATCH 12.2.0.1.44",
+      "platform": "LINUX.X64",
+      "patchId": 6880880,
+      "files": [
+        {
+          "name": "p6880880_122010_Linux-x86-64.zip",
+          "SHA-256": "0011aabbcc0011223344556677889900aabb1122334455667788990011aabbcc",
+          "size": 9876543
+        }
+      ]
+    },
+    {
+      "description": "OJVM Monthly Recommended Patch (MRP) 19.28.0.0.241015",
+      "platform": "LINUX.X64",
+      "patchId": 37056207,
+      "files": [
+        {
+          "name": "p37056207_190000_Linux-x86-64.zip",
+          "checksum-256": "cc0011aabbcc00112233445566778899001122334455667788990011aabbcc00",
+          "size": 5678901
+        }
+      ]
+    }
+  ]
+}

@@ -61,8 +61,10 @@ TRUSTSTORE_INFO=""
 JAVA_BIN=""
 JAVA_VERSION_FULL=""
 DRY_RUN=false
+NO_PIN=false
+_AU_PROFILE_ARG=""
 
-# Deprecated config names 
+# Deprecated config names
 _AU_DEPRECATED_CFGS=("au_download.cfg" "au_create_home.cfg" "au_deploy.cfg")
 
 # =============================================================================
@@ -96,8 +98,10 @@ Wrapper for Oracle AutoUpgrade (jar/autoupgrade.jar). All arguments are passed
 directly to AutoUpgrade; only --help, --dry-run, and -config are intercepted.
 
 Wrapper-only options:
-  --help        Show this message and exit (AutoUpgrade uses -help with one dash)
-  --dry-run     Print the java command line (secrets masked) and exit 0
+  --help              Show this message and exit (AutoUpgrade uses -help)
+  --dry-run           Print the java command line (secrets masked) and exit 0
+  --profile <name>    Select a patch profile by name or path (WP13)
+  --no-pin            Skip writing the pin file after -mode download
 
 Environment variables:
   AUTOUPGRADE_PROXY            Proxy URL; overrides https_proxy / http_proxy.
@@ -213,22 +217,22 @@ mask_cmd() {
 #           normalises mode to lowercase (AU modes are always lowercase).
 # ------------------------------------------------------------------------------
 parse_mode_from_args() {
-    local _i _found="" _val=""
+    local _i _mode_found="" _val=""
     for _i in "${!ARGS[@]}"; do
         if [[ "${ARGS[_i]}" == "-mode" ]]; then
             local _next=$(( _i + 1 ))
             if [[ "${_next}" -ge "${#ARGS[@]}" || "${ARGS[_next]}" == -* ]]; then
                 log_error "-mode requires a value"; exit 1
             fi
-            if [[ -n "${_found}" ]]; then
-                log_error "-mode specified more than once (duplicate: '${ARGS[_next]}' vs '${_found}')"; exit 1
+            if [[ -n "${_mode_found}" ]]; then
+                log_error "-mode specified more than once (duplicate: '${ARGS[_next]}' vs '${_mode_found}')"; exit 1
             fi
             _val="${ARGS[_next]}"
             # normalise to lowercase
-            _found="${_val,,}"
+            _mode_found="${_val,,}"
         fi
     done
-    echo "${_found}"
+    echo "${_mode_found}"
 }
 
 # ------------------------------------------------------------------------------
@@ -240,12 +244,9 @@ main() {
     trap cleanup EXIT
 
     # -------------------------------------------------------------------------
-    # Load configuration (7-level precedence)
-    # -------------------------------------------------------------------------
-    au_load_config
-
-    # -------------------------------------------------------------------------
-    # Parse wrapper arguments
+    # Pre-parse wrapper-only arguments before au_load_config so that
+    # --profile can set _AU_PROFILE_PATH before configuration is loaded.
+    # Only long options are consumed here; single-dash tokens go to AutoUpgrade.
     # -------------------------------------------------------------------------
     local ARGS=()
     local CONFIG_FILE=""
@@ -260,6 +261,15 @@ main() {
                 DRY_RUN=true
                 shift
                 ;;
+            --no-pin)
+                NO_PIN=true
+                shift
+                ;;
+            --profile)
+                [[ $# -lt 2 ]] && { log_error "--profile requires a value"; exit 1; }
+                _AU_PROFILE_ARG="$2"
+                shift 2
+                ;;
             -config)
                 [[ $# -lt 2 ]] && { log_error "-config requires a value"; exit 1; }
                 CONFIG_FILE="$(resolve_config_path "$2")"
@@ -273,8 +283,31 @@ main() {
         esac
     done
 
+    # Resolve profile path before au_load_config so level-2a is populated
+    if [[ -n "${_AU_PROFILE_ARG}" ]]; then
+        # au_set_defaults_no_patch is not yet called; AUTOUPGRADE_BASE is known
+        au_find_profile "${_AU_PROFILE_ARG}"
+        # _AU_PROFILE_PATH is now set; au_load_config reads it at level-2a
+    fi
+
+    # -------------------------------------------------------------------------
+    # Load configuration (7-level precedence, includes level-2a profile)
+    # -------------------------------------------------------------------------
+    au_load_config
+
     # Also honour legacy env var for dry-run
     [[ "${AUTOUPGRADE_DRY_RUN:-false}" == "true" ]] && DRY_RUN=true
+
+    # -------------------------------------------------------------------------
+    # Apply edition and group defaults (WP15)
+    # -------------------------------------------------------------------------
+    au_set_edition_defaults
+    au_set_group_defaults
+
+    # -------------------------------------------------------------------------
+    # Validate profile AU_PATCH keywords (WP13)
+    # -------------------------------------------------------------------------
+    au_validate_profile
 
     # -------------------------------------------------------------------------
     # Deprecation WARN for old config file names 
@@ -347,9 +380,21 @@ main() {
     local rc=0
     "${FULL_CMD[@]}" || rc=$?
 
-    # Post-download VDGI scan 
-    if [[ "${AU_MODE}" == "download" ]]; then
+    # Post-download: VDGI scan and auto-pin (WP7, WP13)
+    if [[ "${AU_MODE}" == "download" && "${rc}" -eq 0 ]]; then
         au_log_scan "${AU_LOG_DIR}" "download"
+        if [[ "${NO_PIN}" == false ]]; then
+            local _pin_script="${SCRIPT_BIN_DIR}/au_patch_pin.sh"
+            if [[ -f "${_pin_script}" ]]; then
+                log_info "Running au_patch_pin.sh for ${AU_DOWNLOAD_FOLDER}"
+                bash "${_pin_script}" "${AU_DOWNLOAD_FOLDER}" || \
+                    log_warn "au_patch_pin.sh exited non-zero; check pin manually"
+            else
+                log_warn "au_patch_pin.sh not found at ${_pin_script}; skipping auto-pin"
+            fi
+        else
+            log_info "Auto-pin skipped (--no-pin)"
+        fi
     fi
 
     exit "${rc}"
