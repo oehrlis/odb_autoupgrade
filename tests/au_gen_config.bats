@@ -220,7 +220,7 @@ CONFIGC
     mkdir -p "${FAKE_SRC}/bin"
     printf '#!/usr/bin/env bash\necho "%s"\n' "${WORK_DIR}/oracle_base" \
         > "${FAKE_SRC}/bin/orabase"
-    chmod +x "${FAKE_SRC}/bin/orabase"
+    chmod 0755 "${FAKE_SRC}/bin/orabase"
     mkdir -p "${FAKE_SRC}/rdbms/lib"
     touch "${FAKE_SRC}/rdbms/lib/config.c"
 
@@ -232,4 +232,102 @@ CONFIGC
     [ "${status}" -eq 0 ]
     [ -f "${_out}" ]
     grep -q "source_home" "${_out}"
+}
+
+# ---------------------------------------------------------------------------
+# MUST 2 regression: group name validation
+# ---------------------------------------------------------------------------
+
+@test "au_gen_config.sh: rejects invalid group name from env (MUST 2)" {
+    # Groups with shell metacharacters must be rejected when passed via env
+    run bash -c "
+        AU_GROUP_OSDBA='dba x;y=injected' bash '${SCRIPT}' \
+            --ru 19.32 \
+            --oracle-base '${WORK_DIR}/oracle_base' \
+            --edition EE \
+            --groups-standard \
+            --skip-group-check \
+            --output '${WORK_DIR}/out_bad_grp.cfg' 2>&1
+    "
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"invalid"* ]] || [[ "${output}" == *"group"* ]]
+}
+
+@test "au_gen_config.sh: rejects group name with newline from env (MUST 2)" {
+    run bash -c "
+        AU_GROUP_OSDBA=$'dba\nINJECTED=key' bash '${SCRIPT}' \
+            --ru 19.32 \
+            --oracle-base '${WORK_DIR}/oracle_base' \
+            --edition EE \
+            --groups-standard \
+            --skip-group-check \
+            --output '${WORK_DIR}/out_nl_grp.cfg' 2>&1
+    "
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"invalid"* ]] || [[ "${output}" == *"group"* ]] || [[ "${output}" == *"newline"* ]]
+}
+
+@test "au_gen_config.sh: rejects invalid group from --groups-from config.c (MUST 2)" {
+    # Write a config.c with an invalid group name that embeds a semicolon
+    mkdir -p "${FAKE_SRC}/rdbms/lib"
+    cat > "${FAKE_SRC}/rdbms/lib/config.c" <<'CONFIGC'
+#define SS_DBA_GRP   "dba x;injected"
+#define SS_OPER_GRP  "oper"
+CONFIGC
+
+    local _out="${WORK_DIR}/out_cfgc_bad.cfg"
+    run bash "${SCRIPT}" \
+        --ru 19.32 \
+        --oracle-base "${WORK_DIR}/oracle_base" \
+        --edition EE \
+        --groups-from "${FAKE_SRC}" \
+        --skip-group-check \
+        --output "${_out}" 2>&1
+    # au_home_read_groups skips invalid group and emits WARN (may include the bad value in the warning)
+    # The generated config FILE must NOT contain the bad value (injection guard)
+    if [ -f "${_out}" ]; then
+        run grep -c "dba x;injected" "${_out}"
+        [ "${output}" = "0" ]
+    fi
+    # The warning (to stderr) proves the invalid name was detected, not silently accepted
+    [[ "${output}" == *"WARN"* ]] || [[ "${status}" -ne 0 ]]
+}
+
+@test "au_home_validate_group: accepts valid group name (MUST 2)" {
+    run bash -c "
+        source '${REPO_ROOT}/lib/common.sh'
+        source '${REPO_ROOT}/lib/au_home.sh'
+        au_home_validate_group 'dba' 'test_label'
+    "
+    [ "${status}" -eq 0 ]
+}
+
+@test "au_home_validate_group: rejects name with semicolon (MUST 2)" {
+    run bash -c "
+        source '${REPO_ROOT}/lib/common.sh'
+        source '${REPO_ROOT}/lib/au_home.sh'
+        au_home_validate_group 'dba;bad' 'test_label' 2>&1
+    "
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"invalid"* ]]
+}
+
+@test "au_home_validate_group: rejects name with newline (MUST 2)" {
+    run bash -c "
+        source '${REPO_ROOT}/lib/common.sh'
+        source '${REPO_ROOT}/lib/au_home.sh'
+        au_home_validate_group $'dba\nINJECT' 'test_label' 2>&1
+    "
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"newline"* ]] || [[ "${output}" == *"invalid"* ]]
+}
+
+@test "au_home_validate_group: rejects name longer than 32 chars (MUST 2)" {
+    run bash -c "
+        source '${REPO_ROOT}/lib/common.sh'
+        source '${REPO_ROOT}/lib/au_home.sh'
+        au_home_validate_group 'a123456789012345678901234567890123' 'test_label' 2>&1
+    "
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"invalid"* ]]
 }

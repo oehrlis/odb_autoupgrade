@@ -178,10 +178,19 @@ check_keystore_staleness() {
 
     if [[ "${new_version}" =~ ^[0-9]+\.[0-9]+\.([0-9]{6})$ ]]; then
         local jar_build_date="${BASH_REMATCH[1]}"
-        local ks_mtime
-        ks_mtime="$(date -r "${ewallet}" '+%y%m%d' 2>/dev/null || true)"
+        local ks_epoch ks_mtime
+        ks_mtime=""
+        # Portable mtime: GNU stat -c %Y or BSD stat -f %m; format via date
+        ks_epoch="$(stat -c '%Y' "${ewallet}" 2>/dev/null)" \
+            || ks_epoch="$(stat -f '%m' "${ewallet}" 2>/dev/null)" \
+            || ks_epoch=""
+        if [[ -n "${ks_epoch}" ]]; then
+            ks_mtime="$(date -d "@${ks_epoch}" '+%y%m%d' 2>/dev/null \
+                || date -r "${ks_epoch}" '+%y%m%d' 2>/dev/null \
+                || true)"
+        fi
         if [[ -n "${ks_mtime}" && -n "${jar_build_date}" ]] \
-            && (( ks_mtime < jar_build_date )); then
+            && (( 10#${ks_mtime} < 10#${jar_build_date} )); then
             log_warn "Keystore files predate JAR build date ${jar_build_date} (keystore mtime ${ks_mtime})."
             log_warn "Re-save recommended: au_keystore.sh --resave"
         fi
@@ -347,11 +356,13 @@ do_work() {
 
     if [[ -n "${old_ver}" && -n "${new_ver}" ]]; then
         local cmp_rc=0
-        au_version_compare "${new_ver}" "${old_ver}" && cmp_rc=0 || cmp_rc=$?
+        au_version_compare "${new_ver}" "${old_ver}" || cmp_rc=$?
 
-        if [[ "${cmp_rc}" -eq 0 ]]; then
+        if [[ "${cmp_rc}" -eq 3 ]]; then
+            die "Invalid version string in JAR manifest (possible injection); refusing to install. new='${new_ver}' installed='${old_ver}'"
+        elif [[ "${cmp_rc}" -eq 0 ]]; then
             if cmp -s "${_JAR_TMP_FILE}" "${JAR_FILE}"; then
-                log_info "Already up to date (${new_ver}). No changes made."
+                log_warn "Already up to date (${new_ver}). No changes made."
                 return 0
             fi
             log_info "Version identical (${new_ver}) but file differs; reinstalling."

@@ -364,6 +364,23 @@ au_load_config() {
         export "${_n}=${_snap_values[_i]}" 2>/dev/null || true
     done
 
+    # After snapshot restore: if the caller had AU_PATCH set (non-empty), the
+    # profile value was overridden by the caller environment (level 2 > 2a).
+    # Reset _au_patch_from_profile so au_read_pin treats AU_PATCH as a
+    # caller-set value; the pin will then not override it either (level 6 < 2).
+    # Design ref: "Configuration precedence" and Q13 in doc/design.md.
+    local _snap_au_patch=""
+    for _i in "${!_snap_names[@]}"; do
+        if [[ "${_snap_names[_i]}" == "AU_PATCH" ]]; then
+            _snap_au_patch="${_snap_values[_i]}"
+            break
+        fi
+    done
+    if [[ -n "${_snap_au_patch}" ]]; then
+        _au_patch_from_profile=false
+        log_debug "Config: AU_PATCH='${_snap_au_patch}' from caller env overrides profile; pin will not apply"
+    fi
+
     # Step 5: Apply defaults (AU_DOWNLOAD_FOLDER needed before pin file read)
     au_set_defaults_no_patch
 

@@ -52,7 +52,10 @@ export AUTOUPGRADE_BASE="${SCRIPT_BASE}"
 # SCRIPT DEFAULTS
 # =============================================================================
 
-SCRIPT_JAR_DIR="${AUTOUPGRADE_BASE}/jar"
+# AU_JAR_DIR: honour the same override that au_update_jar.sh --AU_JAR_DIR uses.
+# Falls back to the shipped jar/ directory next to the script.
+: "${AU_JAR_DIR:=${AUTOUPGRADE_BASE}/jar}"
+SCRIPT_JAR_DIR="${AU_JAR_DIR}"
 JAR_FILE="${SCRIPT_JAR_DIR}/autoupgrade.jar"
 TMP_CFG=""
 JAVA_OPTS=()
@@ -241,7 +244,9 @@ parse_mode_from_args() {
 # Args....: "$@" - all command-line arguments
 # ------------------------------------------------------------------------------
 main() {
-    trap cleanup EXIT
+    # Use setup_error_handling so _au_purge_tmpfiles is always included in the
+    # EXIT trap (fix: scripts must not overwrite the library trap with a plain trap).
+    setup_error_handling
 
     # -------------------------------------------------------------------------
     # Pre-parse wrapper-only arguments before au_load_config so that

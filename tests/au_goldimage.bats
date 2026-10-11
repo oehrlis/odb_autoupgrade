@@ -63,7 +63,7 @@ done
 touch "\${_dest}/${_zip_name}"
 exit 0
 RISTUB
-    chmod +x "${_home}/runInstaller"
+    chmod 0755 "${_home}/runInstaller"
 }
 
 _make_opatch_stub() {
@@ -76,7 +76,7 @@ if [[ "$1" == "lspatches" ]]; then
 fi
 exit 0
 OPATCH
-    chmod +x "${_home}/OPatch/opatch"
+    chmod 0755 "${_home}/OPatch/opatch"
 }
 
 _make_ar_stub() {
@@ -128,7 +128,7 @@ if [[ -n "${_dest}" ]]; then
 #!/usr/bin/env bash
 exit 0
 INNER
-    chmod +x "${_dest}/runInstaller"
+    chmod 0755 "${_dest}/runInstaller"
 fi
 exit 0
 UZSTUB
@@ -443,4 +443,95 @@ UZSTUB
         --edition EE 2>&1
     [ "${status}" -ne 0 ]
     [[ "${output}" == *"slip"* || "${output}" == *"traversal"* || "${output}" == *"ERROR"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# MUST 2 regression: group name injection into response file
+# ---------------------------------------------------------------------------
+
+@test "au_goldimage.sh: rejects invalid group name with semicolon in response file (MUST 2)" {
+    _make_test_zip "${DEST_DIR}" "grp_bad.zip"
+    local _zip="${DEST_DIR}/grp_bad.zip"
+    _make_sha256sum_stub
+    printf 'aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899  grp_bad.zip\n' \
+        > "${_zip}.sha256"
+    _make_unzip_stub
+
+    local _tgt="${WORK_DIR}/grp_bad_oh"
+    run bash -c "
+        AU_GROUP_OSDBA='dba;INJECT=true' bash '${SCRIPT}' \
+            --install '${_zip}' \
+            --target '${_tgt}' \
+            --oracle-base '${WORK_DIR}/oracle_base' \
+            --edition EE 2>&1
+    "
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"invalid"* ]] || [[ "${output}" == *"group"* ]]
+}
+
+@test "au_goldimage.sh: rejects group name with newline (injection) in response file (MUST 2)" {
+    _make_test_zip "${DEST_DIR}" "grp_nl.zip"
+    local _zip="${DEST_DIR}/grp_nl.zip"
+    _make_sha256sum_stub
+    printf 'aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899  grp_nl.zip\n' \
+        > "${_zip}.sha256"
+    _make_unzip_stub
+
+    local _tgt="${WORK_DIR}/grp_nl_oh"
+    run bash -c "
+        AU_GROUP_OSDBA=$'dba\nEXTRA_KEY=injected' bash '${SCRIPT}' \
+            --install '${_zip}' \
+            --target '${_tgt}' \
+            --oracle-base '${WORK_DIR}/oracle_base' \
+            --edition EE 2>&1
+    "
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"newline"* ]] || [[ "${output}" == *"invalid"* ]] || [[ "${output}" == *"group"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# MUST 3 regression: binary trust check on opatch (manifest) and symlinks
+# ---------------------------------------------------------------------------
+
+@test "au_goldimage.sh: --create refuses 0777 opatch binary (MUST 3)" {
+    _make_runinstaller_stub "${FAKE_OH}"
+    _make_ar_stub
+    touch "${FAKE_OH}/rdbms/lib/libknlopt.a"
+    _make_sha256sum_stub
+
+    # Create an opatch that is world-writable (must be refused by trust check)
+    mkdir -p "${FAKE_OH}/OPatch"
+    cat > "${FAKE_OH}/OPatch/opatch" <<'OP'
+#!/usr/bin/env bash
+printf '36233126;Database Release Update : 19.32.0.0\n'
+exit 0
+OP
+    chmod 0777 "${FAKE_OH}/OPatch/opatch"
+
+    run bash "${SCRIPT}" --create --home "${FAKE_OH}" --dest "${DEST_DIR}" 2>&1
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"writable"* ]] || [[ "${output}" == *"refusing"* ]] || [[ "${output}" == *"trust"* ]] || [[ "${output}" == *"ERROR"* ]]
+}
+
+@test "au_goldimage.sh: --create refuses opatch symlink pointing to untrusted target (MUST 3)" {
+    _make_runinstaller_stub "${FAKE_OH}"
+    _make_ar_stub
+    touch "${FAKE_OH}/rdbms/lib/libknlopt.a"
+    _make_sha256sum_stub
+
+    # Create an untrusted opatch in a world-writable directory and symlink to it
+    local _untrusted_dir="${WORK_DIR}/untrusted_dir"
+    mkdir -p "${_untrusted_dir}"
+    chmod 0777 "${_untrusted_dir}"
+    cat > "${_untrusted_dir}/opatch_real" <<'OP'
+#!/usr/bin/env bash
+exit 0
+OP
+    chmod +x "${_untrusted_dir}/opatch_real"
+    mkdir -p "${FAKE_OH}/OPatch"
+    ln -sf "${_untrusted_dir}/opatch_real" "${FAKE_OH}/OPatch/opatch"
+
+    run bash "${SCRIPT}" --create --home "${FAKE_OH}" --dest "${DEST_DIR}" 2>&1
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"writable"* ]] || [[ "${output}" == *"refusing"* ]] || [[ "${output}" == *"trust"* ]] || [[ "${output}" == *"ERROR"* ]]
 }

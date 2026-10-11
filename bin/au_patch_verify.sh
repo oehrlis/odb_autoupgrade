@@ -111,28 +111,40 @@ _au_sha256sum() {
 # ------------------------------------------------------------------------------
 _au_parse_patches_info() {
     local _json="$1"
+    # Output is tab-separated: <name>\t<sha256>\t<size>
+    # Names containing '|' or real newlines are rejected inside jq/python3 and
+    # emitted as the two-field token INVALID_NAME\t<raw-name> so the shell
+    # loop can report them with the actual offending name (dead-code fix).
     if command -v jq >/dev/null 2>&1; then
         jq -r '
             .patches[].files[]? |
-            [
-                .name,
-                (if .["SHA-256"] != null then .["SHA-256"]
-                 elif .["checksum-256"] != null then .["checksum-256"]
-                 else "" end),
-                (.size | tostring)
-            ] | join("|")
+            .name as $n |
+            if ($n | test("[|\n\r]")) then
+                ("INVALID_NAME\t" + $n)
+            else
+                [
+                    $n,
+                    (if .["SHA-256"] != null then .["SHA-256"]
+                     elif .["checksum-256"] != null then .["checksum-256"]
+                     else "" end),
+                    (.size | tostring)
+                ] | @tsv
+            end
         ' "${_json}"
     elif command -v python3 >/dev/null 2>&1; then
         python3 -I -c "
-import json, sys
+import json, sys, re
 with open(sys.argv[1]) as fh:
     d = json.load(fh)
 for patch in d.get('patches', []):
     for f in patch.get('files', []):
         name = f.get('name', '')
+        if re.search(r'[|\n\r]', name):
+            print('INVALID_NAME\t' + name)
+            continue
         sha256 = f.get('SHA-256') or f.get('checksum-256') or ''
         size = str(f.get('size', ''))
-        print('|'.join([name, sha256, size]))
+        print('\t'.join([name, sha256, size]))
 " "${_json}"
     else
         log_error "Neither jq nor python3 available; cannot parse patches_info.json"
@@ -213,16 +225,25 @@ verify_folder() {
     local _name _sha256_exp _size_exp
 
     log_info "Verifying files listed in patches_info.json..."
-    while IFS='|' read -r _name _sha256_exp _size_exp; do
+    # Parser emits tab-separated fields; INVALID_NAME lines carry the raw offending
+    # name in the second field so it can be reported by value (dead-code fix: the
+    # old '|' and newline checks were unreachable after IFS='|' splitting).
+    while IFS=$'\t' read -r _name _sha256_exp _size_exp; do
         [[ -z "${_name}" ]] && continue
 
-        # --- Name safety check: reject injection-prone names ---
+        # --- INVALID_NAME marker from jq/python3 ---
+        if [[ "${_name}" == "INVALID_NAME" ]]; then
+            log_error "  INVALID NAME in patches_info.json: '${_sha256_exp}' (contains '|' or newline)"
+            _VERIFY_FAIL=true
+            continue
+        fi
+
+        # --- Name safety check: reject injection-prone plain names ---
         if [[ -z "${_name}" ]] || \
            [[ "${_name}" == */* ]] || \
-           [[ "${_name}" == .* ]] || \
            [[ "${_name}" == *'|'* ]] || \
-           [[ "${_name}" == *$'\n'* ]]; then
-            log_error "  INVALID NAME in patches_info.json: '${_name}' (must be a plain basename with no /, leading dot, or control chars)"
+           [[ "${_name}" == .* ]]; then
+            log_error "  INVALID NAME in patches_info.json: '${_name}' (must be a plain basename with no /, leading dot, or pipe)"
             _VERIFY_FAIL=true
             continue
         fi

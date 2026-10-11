@@ -377,11 +377,13 @@ _au_write_pin() {
         return 0
     fi
 
-    # Write the pin file atomically via a temp file; clean up on any exit
+    # Write the pin file atomically via a temp file.
+    # Register _tmp in _AU_TMPFILES so _au_purge_tmpfiles (library EXIT cleanup)
+    # removes it on failure. Never set a script-level trap with an interpolated
+    # path: a folder named p'$(cmd)'q would execute code.
     local _tmp=""
     _tmp="$(mktemp "${_pin_file}.XXXXXX")"
-    # shellcheck disable=SC2064
-    trap "rm -f '${_tmp}'" EXIT INT TERM
+    _AU_TMPFILES+=("${_tmp}")
     cat > "${_tmp}" <<PINFILE
 # au_patch.env - AutoUpgrade patch pin file
 # Written by au_patch_pin.sh on $(date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -390,6 +392,13 @@ AU_PATCH=${_new_val}
 PINFILE
     chmod 0600 "${_tmp}"
     mv "${_tmp}" "${_pin_file}"
+    # mv succeeded: remove _tmp from cleanup list (path no longer exists)
+    local -a _au_tf_new=()
+    local _au_tf_e
+    for _au_tf_e in "${_AU_TMPFILES[@]+"${_AU_TMPFILES[@]}"}"; do
+        [[ "${_au_tf_e}" == "${_tmp}" ]] || _au_tf_new+=("${_au_tf_e}")
+    done
+    _AU_TMPFILES=("${_au_tf_new[@]+"${_au_tf_new[@]}"}")
     log_info "Pin file written: AU_PATCH=${_new_val}"
     log_info "Pin file: ${_pin_file}"
 }

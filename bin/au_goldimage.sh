@@ -400,6 +400,7 @@ do_create() {
         printf '# SHA-256: %s\n' "${_sha}"
         printf '\n## OPatch lspatches\n'
         if [[ -x "${OPT_HOME}/OPatch/opatch" ]]; then
+            _au_check_binary_trust "${OPT_HOME}/OPatch/opatch" "opatch (manifest)"
             "${OPT_HOME}/OPatch/opatch" lspatches 2>/dev/null || true
         else
             printf '# OPatch not found at %s/OPatch/opatch\n' "${OPT_HOME}"
@@ -516,6 +517,18 @@ do_install() {
     fi
 
     if [[ "${DRY_RUN}" != "true" ]]; then
+        # Validate all group names before writing them into the response file.
+        # A newline or '=' in a group name would inject extra OUI keys.
+        au_home_validate_group "${AU_GROUP_OSDBA:-dba}" "AU_GROUP_OSDBA"
+        [[ -n "${AU_GROUP_OSOPER:-}" ]]      && au_home_validate_group "${AU_GROUP_OSOPER}"      "AU_GROUP_OSOPER"
+        [[ -n "${AU_GROUP_OSBACKUPDBA:-}" ]] && au_home_validate_group "${AU_GROUP_OSBACKUPDBA}" "AU_GROUP_OSBACKUPDBA"
+        [[ -n "${AU_GROUP_OSDGDBA:-}" ]]     && au_home_validate_group "${AU_GROUP_OSDGDBA}"     "AU_GROUP_OSDGDBA"
+        [[ -n "${AU_GROUP_OSKMDBA:-}" ]]     && au_home_validate_group "${AU_GROUP_OSKMDBA}"     "AU_GROUP_OSKMDBA"
+        [[ -n "${AU_GROUP_OSRACDBA:-}" ]]    && au_home_validate_group "${AU_GROUP_OSRACDBA}"    "AU_GROUP_OSRACDBA"
+        # Validate the inventory group (no newline/= injection)
+        if [[ -n "${_inv_grp}" ]]; then
+            au_home_validate_group "${_inv_grp}" "inventory_group"
+        fi
         {
             printf '[GENERAL]\n'
             printf 'DECLINE_SECURITY_UPDATES=true\n'

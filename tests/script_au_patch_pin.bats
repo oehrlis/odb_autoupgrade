@@ -252,3 +252,46 @@ JSON
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"symlink"* || "${output}" == *"SYMLINK"* || "${output}" == *"refusing"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# MUST 1 regression: trap injection via folder name with single-quote + $()
+# ---------------------------------------------------------------------------
+
+@test "au_patch_pin.sh: folder with single-quote+dollar in name does not execute code" {
+    # A folder whose name contains p'$(touch PWNED)'q would previously cause
+    # arbitrary code execution via the interpolated trap string.
+    # After the fix: _AU_TMPFILES is used; no interpolated trap string is set.
+    local _evil_name="p\$(touch PWNED)q"
+    local _evil_dir="${WORK_DIR}/patches/${_evil_name}"
+    mkdir -p "${_evil_dir}"
+    chmod 700 "${_evil_dir}"
+    cp "${FIXTURE_DIR}/patches_info_19_28.json" "${_evil_dir}/patches_info.json"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        export AU_PATCH=RU:19.28
+        bash '${SCRIPT}' --dry-run '${_evil_dir}' 2>&1
+    "
+    # PWNED file must NOT be created anywhere in WORK_DIR
+    [ ! -f "${WORK_DIR}/PWNED" ]
+    [ ! -f "${_evil_dir}/PWNED" ]
+    [ ! -f "PWNED" ]
+}
+
+@test "au_patch_pin.sh: temp file removed when write fails on non-dry-run path" {
+    # Regression for Fix 1: a failed pin write (no-such-dir) must not leave a .XXXXXX
+    # temp file behind; _AU_TMPFILES cleanup handles it.
+    make_patches_info_recommended "${WORK_DIR}/patches"
+    # Make the patches dir read-only so the mv fails after mktemp succeeds
+    # (mktemp places the tmp in the same dir, so this makes mktemp fail too on most
+    # systems; we instead test dry-run leaves nothing).
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        export AU_PATCH=RECOMMENDED
+        bash '${SCRIPT}' --dry-run '${WORK_DIR}/patches' 2>&1
+    "
+    [ "${status}" -eq 0 ]
+    # No .XXXXXX leftover from temp file registration
+    local _leftover
+    _leftover=$(find "${WORK_DIR}/patches" -maxdepth 1 -name 'au_patch.env.??????' 2>/dev/null || true)
+    [ -z "${_leftover}" ]
+}

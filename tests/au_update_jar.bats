@@ -261,6 +261,32 @@ EOF
 # Keystore staleness warning
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# MUST-1: version injection guard (via au_version_compare, called from do_work)
+# Old code: arithmetic on unvalidated string could execute arbitrary code.
+# New code: returns 3 for invalid version; do_work dies.
+# ---------------------------------------------------------------------------
+
+@test "au_update_jar: refuses JAR with non-numeric Implementation-Version" {
+    local mdir="${WORK_DIR}/.mf_inject"
+    mkdir -p "${mdir}/META-INF"
+    # A version that contains characters invalid in a version string
+    printf 'Manifest-Version: 1.0\nMain-Class: oracle.boot.JointBoot\nImplementation-Version: 26.INJECT.260925\n' \
+        > "${mdir}/META-INF/MANIFEST.MF"
+    dd if=/dev/urandom of="${mdir}/padding.bin" bs=1024 count=1126 2>/dev/null
+    local inject_jar="${WORK_DIR}/inject.jar"
+    (cd "${mdir}" && zip -q "${inject_jar}" META-INF/MANIFEST.MF padding.bin)
+    rm -rf "${mdir}"
+    # Install a real baseline JAR so version comparison is triggered
+    make_fake_au_jar "26.6.260925" "${AU_JAR_DIR}/autoupgrade.jar" >/dev/null
+    run bash "${SCRIPT}" --from "${inject_jar}" --no-verify
+    rm -f "${AU_JAR_DIR}/autoupgrade.jar"
+    # Must refuse installation
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"invalid"* || "${output}" == *"Invalid"* || \
+       "${output}" == *"refused"* || "${output}" == *"injection"* ]]
+}
+
 @test "warns when keystore predates JAR build date" {
     # Create a keystore dir with old ewallet.p12
     local ks_dir="${WORK_DIR}/keystore"

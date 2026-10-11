@@ -138,6 +138,31 @@ EOF
 }
 
 # ------------------------------------------------------------------------------
+# Function: check_pass_file
+# Purpose.: Validate a password file: must exist, be owned by current user,
+#           and not be group/world readable.
+# Args....: $1 - file path, $2 - label for error messages
+# Returns.: 0 on pass, exits via die on failure
+# ------------------------------------------------------------------------------
+check_pass_file() {
+    local file="$1" label="$2"
+    [[ -f "${file}" ]] || die "${label}: file not found: ${file}"
+    local file_perms file_uid
+    file_perms="$(au_file_perms "${file}")"
+    file_uid="$(au_file_owner_uid "${file}")"
+    if [[ -n "${file_uid}" && "${file_uid}" != "$(id -u)" ]]; then
+        die "${label}: file not owned by current user (UID=${file_uid}): ${file}"
+    fi
+    # Readable bit (4) in group or world position makes the field >= 4
+    local g_bit w_bit
+    g_bit="${file_perms: -2:1}"
+    w_bit="${file_perms: -1:1}"
+    if [[ "${g_bit}" =~ [4-7] || "${w_bit}" =~ [4-7] ]]; then
+        die "${label}: file is group or world readable (${file_perms}): ${file}"
+    fi
+}
+
+# ------------------------------------------------------------------------------
 # Function: trimnl
 # Purpose.: Read a file and strip trailing CR/LF without a subshell pipeline.
 # Args....: $1 - file path
@@ -183,35 +208,35 @@ run_create() {
     [[ -L "${cwallet}" ]] && die "cwallet.sso is a symlink, refusing: ${cwallet}"
 
     if [[ "${FORCE}" != "true" && ( -f "${ewallet}" || -f "${cwallet}" ) ]]; then
-        log_info "Wallet already exists in ${WORKDIR} (use --force to recreate). Skipping."
+        log_warn "Wallet already exists in ${WORKDIR} (use --force to recreate). Skipping."
         exit 0
+    fi
+
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log_warn "DRY-RUN: would run au_run.sh -config ${AU_CFG} -patch -load_password"
+        return 0
     fi
 
     if [[ "${FORCE}" == "true" && ( -f "${ewallet}" || -f "${cwallet}" ) ]]; then
         confirm_overwrite "Overwrite existing wallet in ${WORKDIR}?"
         local bak
         bak="$(au_keystore_backup "${WORKDIR}" "${BACKUP_ROOT}")" \
-            && log_info "Backup: ${bak}" \
-            || log_warn "Backup failed; continuing."
+            || die "Backup failed before overwrite; aborting. Use --backup-dir to set a writable backup location."
+        log_info "Backup: ${bak}"
     fi
 
     if [[ "${AUTO_LOGIN}" == "SHARED" ]]; then
         log_warn "--auto-login SHARED: portable keystore - anyone with the files can use MOS credentials"
     fi
 
-    if [[ "${DRY_RUN}" == "true" ]]; then
-        log_info "DRY-RUN: would run au_run.sh -config ${AU_CFG} -patch -load_password"
-        return 0
-    fi
-
     umask 077
-    export -n MOS_PASS KS_PASS 2>/dev/null || true
 
     (
         cd "${WORKDIR}"
         local exp_log_user
         exp_log_user="$([[ "${LOG_LEVEL:-WARN}" == "WARN" || "${LOG_LEVEL:-WARN}" == "ERROR" ]] && printf '0' || printf '1')"
 
+        AU_KEYSTORE="${WORKDIR}" \
         EXPECT_AU_RUN="${AU_RUN}" \
         EXPECT_AU_CFG="${AU_CFG}" \
         EXPECT_MOS_USER="${MOS_USER}" \
@@ -259,7 +284,7 @@ run_create() {
             send -- "YES\r"; exp_continue
         }
 
-        -re {Select auto-login mode for the AutoUpgrade Patching keystore.*\[YES|NO|SHARED\].*} {
+        -re {Select auto-login mode.*\[(YES|NO|SHARED)\].*} {
             send -- "$autologin\r"; exp_continue
         }
 
@@ -267,7 +292,10 @@ run_create() {
             send -- "YES\r"; exp_continue
         }
 
-        eof     { exit 0 }
+        eof {
+            catch wait result
+            exit [lindex $result 3]
+        }
         timeout { puts "ERROR: timed out during keystore creation"; exit 1 }
     }
 EXPECTEOF
@@ -311,13 +339,13 @@ run_resave() {
     fi
 
     umask 077
-    export -n KS_PASS 2>/dev/null || true
 
     (
         cd "${WORKDIR}"
         local exp_log_user
         exp_log_user="$([[ "${LOG_LEVEL:-WARN}" == "WARN" || "${LOG_LEVEL:-WARN}" == "ERROR" ]] && printf '0' || printf '1')"
 
+        AU_KEYSTORE="${WORKDIR}" \
         EXPECT_AU_RUN="${AU_RUN}" \
         EXPECT_AU_CFG="${AU_CFG}" \
         EXPECT_KS_PASS="${KS_PASS}" \
@@ -353,7 +381,7 @@ run_resave() {
             send -- "YES\r"; exp_continue
         }
 
-        -re {Select auto-login mode for the AutoUpgrade Patching keystore.*\[YES|NO|SHARED\].*} {
+        -re {Select auto-login mode.*\[(YES|NO|SHARED)\].*} {
             send -- "$autologin\r"; exp_continue
         }
 
@@ -361,7 +389,10 @@ run_resave() {
             send -- "YES\r"; exp_continue
         }
 
-        eof     { exit 0 }
+        eof {
+            catch wait result
+            exit [lindex $result 3]
+        }
         timeout { puts "ERROR: timed out during keystore re-save"; exit 1 }
     }
 EXPECTEOF
@@ -407,8 +438,8 @@ parse_args() {
             --workdir)       WORKDIR="$2"; shift 2 ;;
             --cfg)           AU_CFG="$2"; shift 2 ;;
             --mos-user)      MOS_USER="$2"; shift 2 ;;
-            --mos-pass-file) MOS_PASS="$(trimnl "$2")"; shift 2 ;;
-            --ks-pass-file)  KS_PASS="$(trimnl "$2")"; shift 2 ;;
+            --mos-pass-file) check_pass_file "$2" "--mos-pass-file"; MOS_PASS="$(trimnl "$2")"; shift 2 ;;
+            --ks-pass-file)  check_pass_file "$2" "--ks-pass-file";  KS_PASS="$(trimnl "$2")"; shift 2 ;;
             --backup-dir)    BACKUP_ROOT="$2"; shift 2 ;;
             --mos-pass)      _arg_mos_pass="$2"; shift 2 ;;
             --ks-pass)       _arg_ks_pass="$2"; shift 2 ;;
@@ -448,6 +479,11 @@ parse_args() {
 validate_inputs() {
     # Normalise trailing slashes
     while [[ "${WORKDIR}" == */ && "${WORKDIR}" != "/" ]]; do WORKDIR="${WORKDIR%/}"; done
+
+    # Resolve to absolute path so backup directory is always computed outside the keystore
+    if [[ "${WORKDIR}" != /* ]]; then
+        WORKDIR="$(pwd)/${WORKDIR}"
+    fi
 
     # --check and --backup do not need au_run.sh or expect
     if [[ "${OPERATION}" == "check" || "${OPERATION}" == "backup" ]]; then
@@ -518,6 +554,10 @@ cleanup() {
 # =============================================================================
 
 main() {
+    # Unexport password variables immediately so no child process inherits them.
+    # This covers all operations (--check, --backup, --create, --resave).
+    export -n MOS_PASS KS_PASS 2>/dev/null || true
+
     setup_error_handling
 
     au_load_config

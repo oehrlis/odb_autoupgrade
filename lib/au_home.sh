@@ -4,8 +4,8 @@
 # ------------------------------------------------------------------------------
 # Module.....: au_home.sh
 # Author.....: Stefan Oehrli (oes) stefan.oehrli@oradba.ch
-# Date.......: 2026.10.09
-# Version....: v0.6.0
+# Date.......: 2026.10.10
+# Version....: v0.7.0
 # Purpose....: Oracle Home inspection helpers: OS groups from config.c and
 #              binary options from libknlopt.a for WP9 (au_gen_config.sh,
 #              au_home_verify.sh).
@@ -19,10 +19,47 @@
 # ------------------------------------------------------------------------------
 # Modified...:
 # 2026.10.09 oehrli - initial version for WP9
+# 2026.10.10 oehrli - MUST 2: add au_home_validate_group; validate group names
+#                     in au_home_read_groups output; MUST 3: _au_check_binary_
+#                     trust checks binary mode (g/o-writable refused) and
+#                     resolves symlinks to verify target owner/mode/dir
 # ------------------------------------------------------------------------------
 
 # Guard on function existence, not an inheritable variable.
 declare -F au_home_read_groups >/dev/null 2>&1 && return 0
+
+# =============================================================================
+# GROUP NAME VALIDATION
+# =============================================================================
+
+# ------------------------------------------------------------------------------
+# Function: au_home_validate_group
+# Purpose.: Validate that a group name matches ^[A-Za-z0-9_.-]{1,32}$.
+#           Rejects names with shell metacharacters, whitespace, '=',
+#           newline/CR, or names longer than 32 characters.
+#           Dies via die() on violation.
+# Args....: $1 - group name to validate
+#           $2 - label (for the error message, e.g. "osdba_group")
+# Returns.: 0 if valid; exits via die() on violation.
+# ------------------------------------------------------------------------------
+au_home_validate_group() {
+    local _grp="$1" _label="${2:-group}"
+    # Reject empty
+    if [[ -z "${_grp}" ]]; then
+        die "${_label}: group name must not be empty"
+    fi
+    # Reject newline or CR (guard against injection before pattern match)
+    case "${_grp}" in
+        *$'\n'* | *$'\r'*)
+            die "${_label}: group name '${_grp}' contains newline/CR - injection refused"
+            ;;
+    esac
+    # Validate: only [A-Za-z0-9_.-], 1-32 chars
+    local _re='^[A-Za-z0-9_.-]{1,32}$'
+    if [[ ! "${_grp}" =~ ${_re} ]]; then
+        die "${_label}: group name '${_grp}' is invalid (allowed: A-Za-z0-9_.- up to 32 chars)"
+    fi
+}
 
 # =============================================================================
 # OS GROUP PARSING
@@ -96,6 +133,12 @@ au_home_read_groups() {
         local _re="#define[[:space:]]+${_define}[[:space:]]+\"([^\"]+)\""
         if [[ "${_line}" =~ ${_re} ]]; then
             _val="${BASH_REMATCH[1]}"
+            # Validate before emitting; skip invalid entries with a warning
+            local _grp_re='^[A-Za-z0-9_.-]{1,32}$'
+            if [[ ! "${_val}" =~ ${_grp_re} ]]; then
+                echo "WARN: au_home_read_groups: skipping invalid group name '${_val}' for ${_key} in ${_configc}" >&2
+                continue
+            fi
             printf '%s=%s\n' "${_key}" "${_val}"
         fi
     done
@@ -249,28 +292,47 @@ _au_check_binary_trust() {
     _cur_uid=$(id -u 2>/dev/null || true)
     [[ -z "${_cur_uid}" ]] && die "${_label}: cannot determine current uid"
 
-    [[ -f "${_bin}" ]] || die "${_label}: not found: ${_bin}"
+    [[ -e "${_bin}" ]] || die "${_label}: not found: ${_bin}"
     [[ -x "${_bin}" ]] || die "${_label}: not executable: ${_bin}"
 
-    # Numeric owner check
-    local _bin_uid=""
-    _bin_uid=$(stat -c '%u' "${_bin}" 2>/dev/null \
-        || stat -f '%u' "${_bin}" 2>/dev/null \
-        || true)
-    if [[ -z "${_bin_uid}" ]]; then
-        die "${_label}: cannot determine owner of ${_bin} (stat failed), refusing"
-    fi
-    if [[ "${_bin_uid}" != "0" && "${_bin_uid}" != "${_cur_uid}" ]]; then
-        die "${_label}: ${_bin} owned by uid ${_bin_uid} (not root=0 or current=${_cur_uid}), refusing"
+    # Resolve symlinks to the real target; always check the target.
+    local _real_bin="${_bin}"
+    if [[ -L "${_bin}" ]]; then
+        _real_bin=$(readlink -f "${_bin}" 2>/dev/null \
+            || python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "${_bin}" 2>/dev/null \
+            || true)
+        if [[ -z "${_real_bin}" || ! -e "${_real_bin}" ]]; then
+            die "${_label}: symlink ${_bin} resolves to a non-existent target, refusing"
+        fi
+        [[ -x "${_real_bin}" ]] || die "${_label}: symlink target ${_real_bin} is not executable, refusing"
     fi
 
-    # Directory must not be group/world-writable
-    local _dir="${_bin%/*}"
-    [[ "${_dir}" == "${_bin}" || -z "${_dir}" ]] && _dir="."
+    # Check the real binary's numeric owner (uid 0 = root, or current user only).
+    local _bin_uid=""
+    _bin_uid=$(stat -c '%u' "${_real_bin}" 2>/dev/null \
+        || stat -f '%u' "${_real_bin}" 2>/dev/null \
+        || true)
+    if [[ -z "${_bin_uid}" ]]; then
+        die "${_label}: cannot determine owner of ${_real_bin} (stat failed), refusing"
+    fi
+    if [[ "${_bin_uid}" != "0" && "${_bin_uid}" != "${_cur_uid}" ]]; then
+        die "${_label}: ${_real_bin} owned by uid ${_bin_uid} (not root=0 or current=${_cur_uid}), refusing"
+    fi
+
+    # The real binary itself must not be group/world-writable.
+    local _bin_writable=""
+    _bin_writable=$(find "${_real_bin}" -maxdepth 0 \( -perm -g+w -o -perm -o+w \) 2>/dev/null || true)
+    if [[ -n "${_bin_writable}" ]]; then
+        die "${_label}: ${_real_bin} is group/world-writable, refusing to execute"
+    fi
+
+    # Directory of the real binary must not be group/world-writable.
+    local _dir="${_real_bin%/*}"
+    [[ "${_dir}" == "${_real_bin}" || -z "${_dir}" ]] && _dir="."
     local _writable=""
     _writable=$(find "${_dir}" -maxdepth 0 \( -perm -g+w -o -perm -o+w \) 2>/dev/null || true)
     if [[ -n "${_writable}" ]]; then
-        die "${_label}: directory ${_dir} is group/world-writable, refusing to execute ${_bin}"
+        die "${_label}: directory ${_dir} is group/world-writable, refusing to execute ${_real_bin}"
     fi
 }
 
@@ -308,4 +370,4 @@ _au_check_zip_slip() {
     done <<< "${_list_out}"
 }
 
-# au_home.sh loaded (v0.6.0)
+# au_home.sh loaded (v0.7.0)

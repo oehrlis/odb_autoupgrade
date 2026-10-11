@@ -841,3 +841,115 @@ STUBEOF
     [ "${status}" -ne 0 ]
     [[ "${output}" == *"readonly"* ]]
 }
+
+# =============================================================================
+# MUST 3 regression: configuration precedence (caller > profile > pin)
+# =============================================================================
+
+_make_pin_file() {
+    local _dir="$1" _val="$2"
+    printf 'AU_PATCH=%s\n' "${_val}" > "${_dir}/au_patch.env"
+    chmod 600 "${_dir}/au_patch.env"
+}
+
+_make_profile_file() {
+    local _dir="$1" _name="$2" _val="$3"
+    mkdir -p "${_dir}/etc/profiles"
+    chmod 700 "${_dir}/etc/profiles"
+    printf 'AU_PROFILE_DESC="test"\nAU_PATCH=%s\nAU_TARGET_VERSION=19\nAU_PLATFORM=LINUX.X64\nAU_GOLD_IMAGE=NO\n' \
+        "${_val}" > "${_dir}/etc/profiles/${_name}.profile"
+    chmod 644 "${_dir}/etc/profiles/${_name}.profile"
+}
+
+@test "au_load_config precedence: caller AU_PATCH wins over profile and pin" {
+    # Bug regression (MUST 3): caller=RU:19.30, profile=RU:19.32, pin=RU:19.28
+    # Expected: caller wins -> RU:19.30
+    # Note: _AU_PROFILE_PATH must be set AFTER sourcing the lib because au_env.sh
+    # resets it to "" at module-load time; au_run.sh does the same (au_find_profile
+    # is called after the lib is loaded).
+    _make_profile_file "${WORK_DIR}" "p1" "RU:19.32"
+    _make_pin_file "${WORK_DIR}/patches" "RU:19.28"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        export AU_PATCH=RU:19.30
+        source '${LIB}'
+        _AU_PROFILE_PATH='${WORK_DIR}/etc/profiles/p1.profile'
+        au_load_config 2>/dev/null
+        echo \"PA=\${AU_PATCH}\"
+    "
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"PA=RU:19.30"* ]]
+}
+
+@test "au_load_config precedence: pin wins over profile (no caller AU_PATCH)" {
+    # No caller AU_PATCH -> pin (level 6) beats profile (level 2a)
+    _make_profile_file "${WORK_DIR}" "p2" "RU:19.32"
+    _make_pin_file "${WORK_DIR}/patches" "RU:19.28"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        unset AU_PATCH 2>/dev/null || true
+        source '${LIB}'
+        _AU_PROFILE_PATH='${WORK_DIR}/etc/profiles/p2.profile'
+        au_load_config 2>/dev/null
+        echo \"PA=\${AU_PATCH}\"
+    "
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"PA=RU:19.28"* ]]
+}
+
+@test "au_load_config precedence: profile AU_PATCH used when no caller and no pin" {
+    # Only profile sets AU_PATCH -> profile value used (not default RECOMMENDED)
+    _make_profile_file "${WORK_DIR}" "p3" "RU:19.32"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        unset AU_PATCH 2>/dev/null || true
+        source '${LIB}'
+        _AU_PROFILE_PATH='${WORK_DIR}/etc/profiles/p3.profile'
+        au_load_config 2>/dev/null
+        echo \"PA=\${AU_PATCH}\"
+    "
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"PA=RU:19.32"* ]]
+}
+
+@test "au_load_config precedence: caller AU_PATCH wins over pin (no profile)" {
+    _make_pin_file "${WORK_DIR}/patches" "RU:19.28"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        export AU_PATCH=RU:19.30
+        source '${LIB}'
+        au_load_config 2>/dev/null
+        echo \"PA=\${AU_PATCH}\"
+    "
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"PA=RU:19.30"* ]]
+}
+
+@test "au_load_config precedence: pin applied when no caller AU_PATCH and no profile" {
+    _make_pin_file "${WORK_DIR}/patches" "RU:19.30"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        unset AU_PATCH 2>/dev/null || true
+        source '${LIB}'
+        au_load_config 2>/dev/null
+        echo \"PA=\${AU_PATCH}\"
+    "
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"PA=RU:19.30"* ]]
+}
+
+@test "au_load_config precedence: caller shadows pin -> WARN emitted" {
+    # Caller sets AU_PATCH and a pin file exists -> WARN naming the pin file
+    _make_pin_file "${WORK_DIR}/patches" "RU:19.28"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        export AU_PATCH=RU:19.30
+        export LOG_LEVEL=WARN
+        source '${LIB}'
+        au_load_config
+        echo \"PA=\${AU_PATCH}\"
+    "
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"PA=RU:19.30"* ]]
+    [[ "${output}" == *"caller"* || "${output}" == *"pin"* ]]
+}

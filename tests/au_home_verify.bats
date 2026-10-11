@@ -78,7 +78,7 @@ if [[ "\$1" == "lspatches" ]]; then
 fi
 exit 0
 OPATCH
-    chmod +x "${_home}/OPatch/opatch"
+    chmod 0755 "${_home}/OPatch/opatch"
 }
 
 _make_patches_json() {
@@ -366,4 +366,56 @@ OPSH
         --no-groups --no-binopt 2>&1
     [ "${status}" -ne 0 ]
     [[ "${output}" == *"opatch"* || "${output}" == *"writable"* || "${output}" == *"refusing"* || "${output}" == *"ERROR"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# MUST 3 regression: binary trust - binary mode and symlink target checks
+# ---------------------------------------------------------------------------
+
+@test "_au_check_binary_trust: refuses g/o-writable binary (MUST 3)" {
+    local _bin="${WORK_DIR}/bad_bin"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "${_bin}"
+    chmod 0777 "${_bin}"
+
+    run bash -c "
+        source '${REPO_ROOT}/lib/common.sh'
+        source '${REPO_ROOT}/lib/au_home.sh'
+        _au_check_binary_trust '${_bin}' 'test-bin' 2>&1
+    "
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"writable"* ]] || [[ "${output}" == *"refusing"* ]]
+}
+
+@test "_au_check_binary_trust: refuses symlink whose target is in a g/o-writable dir (MUST 3)" {
+    local _untrusted_dir="${WORK_DIR}/untrusted"
+    mkdir -p "${_untrusted_dir}"
+    chmod 0777 "${_untrusted_dir}"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "${_untrusted_dir}/real_bin"
+    chmod 0755 "${_untrusted_dir}/real_bin"
+
+    local _link="${WORK_DIR}/link_bin"
+    ln -sf "${_untrusted_dir}/real_bin" "${_link}"
+
+    run bash -c "
+        source '${REPO_ROOT}/lib/common.sh'
+        source '${REPO_ROOT}/lib/au_home.sh'
+        _au_check_binary_trust '${_link}' 'test-link' 2>&1
+    "
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"writable"* ]] || [[ "${output}" == *"refusing"* ]]
+}
+
+@test "_au_check_binary_trust: accepts trusted binary with correct perms (MUST 3)" {
+    local _trusted_dir="${WORK_DIR}/trusted"
+    mkdir -p "${_trusted_dir}"
+    chmod 0755 "${_trusted_dir}"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "${_trusted_dir}/good_bin"
+    chmod 0755 "${_trusted_dir}/good_bin"
+
+    run bash -c "
+        source '${REPO_ROOT}/lib/common.sh'
+        source '${REPO_ROOT}/lib/au_home.sh'
+        _au_check_binary_trust '${_trusted_dir}/good_bin' 'test-good' 2>&1
+    "
+    [ "${status}" -eq 0 ]
 }

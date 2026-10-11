@@ -264,17 +264,19 @@ make_cfg() {
     make_mock_mkstore_without_keys
     # shellcheck disable=SC2030,SC2031
     PATH="${WORK_DIR}/bin:${PATH}" run bash "${SCRIPT}" --check --workdir "${WORK_DIR}/keystore"
-    # Key pair check is best-effort (WARN not ERROR); basic perms pass -> exit 0
-    [ "${status}" -eq 0 ]
+    # Unverified key pair -> exit 2 (warning, not hard error)
+    [ "${status}" -eq 2 ]
     [[ "${output}" == *"PKEY"* ]]
 }
 
-@test "--check warns when mkstore not available" {
+@test "--check exits 2 when mkstore not available (PKEY unverified)" {
     make_wallet_files "${WORK_DIR}/keystore"
-    # Ensure mkstore is not in PATH
-    run bash "${SCRIPT}" --check --workdir "${WORK_DIR}/keystore"
-    # Should warn but overall check depends on perms only
-    [[ "${output}${output}" == *"mkstore not available"* || "${stderr}" == *"mkstore not available"* ]]
+    # WORK_DIR/bin has no mkstore stub; system mkstore not installed.
+    # command -v mkstore fails -> "not available" warn -> exit 2.
+    PATH="${WORK_DIR}/bin:${PATH}" \
+        run bash "${SCRIPT}" --check --workdir "${WORK_DIR}/keystore"
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"mkstore not available"* || "${output}" == *"PKEY"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -363,4 +365,226 @@ make_cfg() {
     run bash "${SCRIPT}" --help
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"Usage:"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# MUST-1: au_version_compare injection guard (SECURITY)
+# Old code: arithmetic on unvalidated string could execute code.
+# New code: au_version_validate rejects non-numeric strings, returns 3.
+# ---------------------------------------------------------------------------
+
+@test "au_version_validate: accepts valid version strings" {
+    source "${TOOLS_LIB}"
+    run au_version_validate "26.6.260925"
+    [ "${status}" -eq 0 ]
+}
+
+@test "au_version_validate: rejects non-numeric version component" {
+    source "${TOOLS_LIB}"
+    run au_version_validate "26.a.260925"
+    [ "${status}" -ne 0 ]
+}
+
+@test "au_version_compare: returns 3 for non-numeric version (injection guard)" {
+    source "${TOOLS_LIB}"
+    run au_version_compare "26.INVALID.260925" "26.6.260925"
+    [ "${status}" -eq 3 ]
+}
+
+@test "au_version_compare: returns 3 for version with special chars" {
+    source "${TOOLS_LIB}"
+    # A crafted string that would execute code in old (unvalidated) arithmetic
+    # The string contains characters that are invalid in a numeric version.
+    # Using 'a1' prefix: au_version_validate rejects it before any arithmetic.
+    run au_version_compare "a1.2.3" "26.6.260925"
+    [ "${status}" -eq 3 ]
+}
+
+# ---------------------------------------------------------------------------
+# MUST-2: passwords not exported to child processes
+# Old code: export -n only in run_create/run_resave; --check exposed them.
+# New code: export -n in main(), covers all operations including --check.
+# ---------------------------------------------------------------------------
+
+@test "--check: MOS_PASS and KS_PASS not exported to child processes" {
+    make_wallet_files "${WORK_DIR}/keystore"
+    local env_dump="${WORK_DIR}/mkstore_env.txt"
+    # mkstore stub dumps its environment and reports PKEY1/PKEY2 present
+    cat > "${WORK_DIR}/bin/mkstore" <<EOF
+#!/usr/bin/env bash
+env > "${env_dump}"
+echo "PKEY1"
+echo "PKEY2"
+exit 0
+EOF
+    chmod +x "${WORK_DIR}/bin/mkstore"
+    MOS_PASS="SECRETMOS_UNIQUE_XYZ" KS_PASS="SECRETKS_UNIQUE_XYZ" \
+        PATH="${WORK_DIR}/bin:${PATH}" \
+        run bash "${SCRIPT}" --check --workdir "${WORK_DIR}/keystore"
+    [ "${status}" -eq 0 ]
+    # mkstore must have been called (env dump must exist)
+    [ -f "${env_dump}" ]
+    # Passwords must NOT appear in the child process environment
+    run grep "SECRETMOS_UNIQUE_XYZ" "${env_dump}"
+    [ "${status}" -ne 0 ]
+    run grep "SECRETKS_UNIQUE_XYZ" "${env_dump}"
+    [ "${status}" -ne 0 ]
+}
+
+@test "--backup: MOS_PASS and KS_PASS not exported to child processes (tar)" {
+    make_wallet_files "${WORK_DIR}/keystore"
+    local env_dump="${WORK_DIR}/tar_env.txt"
+    # tar stub dumps its environment
+    cat > "${WORK_DIR}/bin/tar" <<EOF
+#!/usr/bin/env bash
+env > "${env_dump}"
+exit 0
+EOF
+    chmod +x "${WORK_DIR}/bin/tar"
+    MOS_PASS="SECRETMOS_UNIQUE_TAR" KS_PASS="SECRETKS_UNIQUE_TAR" \
+        PATH="${WORK_DIR}/bin:${PATH}" \
+        run bash "${SCRIPT}" --backup --workdir "${WORK_DIR}/keystore" \
+            --backup-dir "${WORK_DIR}/ks_backup"
+    # tar was called (env dump must exist)
+    [ -f "${env_dump}" ]
+    run grep "SECRETMOS_UNIQUE_TAR" "${env_dump}"
+    [ "${status}" -ne 0 ]
+    run grep "SECRETKS_UNIQUE_TAR" "${env_dump}"
+    [ "${status}" -ne 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# MUST-3: backup-before-change correctness
+# ---------------------------------------------------------------------------
+
+# MUST-3a: backup failure must die, not continue
+@test "--create --force: backup failure causes die not continue" {
+    make_wallet_files "${WORK_DIR}/keystore"
+    make_mock_expect_success
+    make_mock_au_run
+    # Create a FILE at the backup root path so mkdir -p fails (cannot mkdir over a file)
+    touch "${WORK_DIR}/ks_backup_file"
+    local cfg
+    cfg="$(make_cfg)"
+    PATH="${WORK_DIR}/bin:${PATH}" \
+        run bash "${SCRIPT}" --create --force --yes \
+            --workdir "${WORK_DIR}/keystore" \
+            --backup-dir "${WORK_DIR}/ks_backup_file" \
+            --cfg "${cfg}" --mos-user test@example.com \
+            --insecure-argv --mos-pass pass1 --ks-pass pass2
+    # Must exit non-zero (old code: log_warn "continuing" and proceeded)
+    [ "${status}" -ne 0 ]
+}
+
+# MUST-3b: relative workdir does not put backup inside the keystore directory
+@test "--backup with relative workdir: backup placed outside keystore" {
+    local abs_ks="${WORK_DIR}/keystore"
+    make_wallet_files "${abs_ks}"
+    # Run from WORK_DIR with relative --workdir; no explicit --backup-dir
+    run bash -c "cd '${WORK_DIR}' && bash '${SCRIPT}' --backup --workdir 'keystore'"
+    [ "${status}" -eq 0 ]
+    # Backup must be in sibling directory, not inside the keystore
+    local bak_count
+    bak_count="$(ls "${WORK_DIR}/keystore_backup"/*.tar.gz 2>/dev/null | wc -l | tr -d ' ')"
+    [ "${bak_count}" -ge 1 ]
+    # Must NOT have created backup inside the keystore directory
+    [ ! -d "${abs_ks}/keystore_backup" ]
+}
+
+# MUST-3c: --dry-run must not trigger backup
+@test "--create --dry-run --force does not write any backup" {
+    make_wallet_files "${WORK_DIR}/keystore"
+    local cfg
+    cfg="$(make_cfg)"
+    run bash "${SCRIPT}" --create --dry-run --force --yes \
+        --workdir "${WORK_DIR}/keystore" \
+        --backup-dir "${WORK_DIR}/ks_backup" \
+        --cfg "${cfg}" --mos-user test@example.com \
+        --insecure-argv --mos-pass pass1 --ks-pass pass2
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"DRY-RUN"* ]]
+    # No backup directory should have been created by --dry-run
+    [ ! -d "${WORK_DIR}/ks_backup" ]
+}
+
+# MUST-3d: partial backup file removed on tar failure
+@test "au_keystore_backup: cleans up partial backup on tar failure" {
+    source "${TOOLS_LIB}"
+    make_wallet_files "${WORK_DIR}/keystore"
+    # tar stub creates a file then exits non-zero (simulates partial write)
+    local partial_marker="${WORK_DIR}/tar_was_called"
+    cat > "${WORK_DIR}/bin/tar" <<EOF
+#!/usr/bin/env bash
+# Find -f argument and write a partial file there
+_next=0
+for arg in "\$@"; do
+    if [[ "\${_next}" == "1" ]]; then
+        printf 'partial_data' > "\${arg}"
+        break
+    fi
+    [[ "\${arg}" == "-f" ]] && _next=1
+done
+touch "${partial_marker}"
+exit 1
+EOF
+    chmod +x "${WORK_DIR}/bin/tar"
+    PATH="${WORK_DIR}/bin:${PATH}" \
+        run au_keystore_backup "${WORK_DIR}/keystore" "${WORK_DIR}/ks_backup"
+    [ "${status}" -ne 0 ]
+    # tar was called
+    [ -f "${partial_marker}" ]
+    # Partial backup file must have been removed
+    local remaining
+    remaining="$(ls "${WORK_DIR}/ks_backup"/*.tar.gz 2>/dev/null | wc -l | tr -d ' ')"
+    [ "${remaining}" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# SHOULD-9: --mos-pass-file and --ks-pass-file permission checks
+# ---------------------------------------------------------------------------
+
+@test "--mos-pass-file refuses group-readable file" {
+    local cfg
+    cfg="$(make_cfg)"
+    local pass_file="${WORK_DIR}/mos_pass.txt"
+    printf 'mypassword\n' > "${pass_file}"
+    chmod 640 "${pass_file}"  # group-readable
+    run bash "${SCRIPT}" --create --workdir "${WORK_DIR}/keystore_pf" \
+        --cfg "${cfg}" --mos-user test@example.com \
+        --mos-pass-file "${pass_file}" --insecure-argv --ks-pass testks
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"readable"* || "${output}" == *"permission"* || \
+       "${output}" == *"group"* || "${output}" == *"world"* ]]
+}
+
+@test "--ks-pass-file refuses world-readable file" {
+    local cfg
+    cfg="$(make_cfg)"
+    local ks_file="${WORK_DIR}/ks_pass.txt"
+    printf 'mykspass\n' > "${ks_file}"
+    chmod 604 "${ks_file}"  # world-readable
+    run bash "${SCRIPT}" --create --workdir "${WORK_DIR}/keystore_kf" \
+        --cfg "${cfg}" --mos-user test@example.com \
+        --insecure-argv --mos-pass testmos --ks-pass-file "${ks_file}"
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"readable"* || "${output}" == *"permission"* || \
+       "${output}" == *"group"* || "${output}" == *"world"* ]]
+}
+
+@test "--mos-pass-file accepts owner-only readable file" {
+    make_mock_expect_success
+    make_mock_au_run
+    local cfg
+    cfg="$(make_cfg)"
+    local pass_file="${WORK_DIR}/mos_pass_ok.txt"
+    printf 'mypassword\n' > "${pass_file}"
+    chmod 600 "${pass_file}"  # owner-only
+    local ks_dir="${WORK_DIR}/keystore_pf_ok"
+    mkdir -p "${ks_dir}"
+    chmod 700 "${ks_dir}"
+    PATH="${WORK_DIR}/bin:${PATH}" \
+        run bash "${SCRIPT}" --create --workdir "${ks_dir}" \
+            --cfg "${cfg}" --mos-user test@example.com \
+            --mos-pass-file "${pass_file}" --insecure-argv --ks-pass testks
+    [ "${status}" -eq 0 ]
 }

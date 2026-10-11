@@ -418,6 +418,16 @@ do_work() {
             log_warn "No group source specified; using AU_GROUP_* from environment (may be empty -> AU defaults to 'dba')"
         fi
 
+        # Validate all group names at every entry point (env or config.c derived).
+        # Prevents names like "dba x;y=$z" from reaching the generated config.
+        local _gv _gval
+        for _gv in AU_GROUP_OSDBA AU_GROUP_OSOPER AU_GROUP_OSBACKUPDBA \
+                   AU_GROUP_OSDGDBA AU_GROUP_OSKMDBA AU_GROUP_OSRACDBA; do
+            _gval="${!_gv:-}"
+            [[ -z "${_gval}" ]] && continue
+            au_home_validate_group "${_gval}" "${_gv}"
+        done
+
         if [[ "${OPT_SKIP_GROUP_CHECK}" == "true" ]]; then
             log_warn "Skipping group membership check (--skip-group-check)"
         else

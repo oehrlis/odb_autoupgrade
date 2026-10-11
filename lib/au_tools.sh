@@ -71,20 +71,44 @@ au_jar_version_numeric() {
 }
 
 # ------------------------------------------------------------------------------
+# Function: au_version_validate
+# Purpose.: Reject any version string that contains non-digit/non-dot chars.
+#           Guards au_version_compare against arithmetic code injection
+#           (e.g. 'a[$(id)]' would execute in (( )) without this check).
+# Args....: $1 - version string
+# Returns.: 0 if valid (digits and dots only), 1 if invalid
+# ------------------------------------------------------------------------------
+au_version_validate() {
+    local v="$1"
+    [[ "${v}" =~ ^[0-9]+(\.[0-9]+){0,4}$ ]]
+}
+
+# ------------------------------------------------------------------------------
 # Function: au_version_compare
 # Purpose.: Compare two dotted version strings.
 # Args....: $1 - version A, $2 - version B
-# Returns.: 0 if A == B, 1 if A > B, 2 if A < B
+# Returns.: 0 if A == B, 1 if A > B, 2 if A < B, 3 if either is invalid
+# Notes...: Both inputs are validated against ^[0-9]+(\.[0-9]+){0,4}$ before
+#           any arithmetic to prevent code injection via crafted version strings.
+#           10# prefix forces base-10 interpretation (prevents octal surprises).
 # ------------------------------------------------------------------------------
 au_version_compare() {
+    if ! au_version_validate "$1"; then
+        printf 'ERROR: invalid version string: %s\n' "$1" >&2
+        return 3
+    fi
+    if ! au_version_validate "$2"; then
+        printf 'ERROR: invalid version string: %s\n' "$2" >&2
+        return 3
+    fi
     local -a a b
     read -r -a a <<< "$(au_jar_version_numeric "$1")"
     read -r -a b <<< "$(au_jar_version_numeric "$2")"
     local i
     for i in 0 1 2; do
         local av="${a[$i]:-0}" bv="${b[$i]:-0}"
-        if (( av > bv )); then return 1; fi
-        if (( av < bv )); then return 2; fi
+        if (( 10#${av} > 10#${bv} )); then return 1; fi
+        if (( 10#${av} < 10#${bv} )); then return 2; fi
     done
     return 0
 }
@@ -269,11 +293,13 @@ au_keystore_check() {
 
     # --- Key pair (best effort via mkstore) ---
     local mkstore_timeout="${MKSTORE_TIMEOUT:-15}"
+    local key_pair_confirmed=0
     if command -v mkstore >/dev/null 2>&1 && [[ -f "${ewallet}" ]]; then
         local mkstore_out
         mkstore_out="$(timeout "${mkstore_timeout}" mkstore -wrl "${ks_dir}" -list 2>/dev/null || true)"
         if [[ "${mkstore_out}" == *"PKEY1"* && "${mkstore_out}" == *"PKEY2"* ]]; then
             log_info "Key pair PKEY1/PKEY2 present in keystore."
+            key_pair_confirmed=1
         else
             log_warn "Key pair PKEY1/PKEY2 not confirmed (mkstore -list). Re-save: au_keystore.sh --resave"
         fi
@@ -281,18 +307,32 @@ au_keystore_check() {
         log_warn "mkstore not available; PKEY1/PKEY2 unverified. Manual check: group mos -> list"
     fi
 
-    # --- Age vs JAR build date ---
+    # --- Age vs JAR build date (portable mtime via stat) ---
     if [[ -n "${jar_file}" && -f "${jar_file}" && -f "${ewallet}" ]]; then
-        local jar_version jar_build_date ks_mtime
+        local jar_version jar_build_date ks_epoch ks_mtime
+        ks_mtime=""
         jar_version="$(au_jar_version "${jar_file}" 2>/dev/null || true)"
         if [[ "${jar_version}" =~ ^[0-9]+\.[0-9]+\.([0-9]{6})$ ]]; then
             jar_build_date="${BASH_REMATCH[1]}"
-            ks_mtime="$(date -r "${ewallet}" '+%y%m%d' 2>/dev/null || true)"
+            # Portable mtime: GNU stat -c %Y, BSD stat -f %m; then format via date
+            ks_epoch="$(stat -c '%Y' "${ewallet}" 2>/dev/null)" \
+                || ks_epoch="$(stat -f '%m' "${ewallet}" 2>/dev/null)" \
+                || ks_epoch=""
+            if [[ -n "${ks_epoch}" ]]; then
+                ks_mtime="$(date -d "@${ks_epoch}" '+%y%m%d' 2>/dev/null \
+                    || date -r "${ks_epoch}" '+%y%m%d' 2>/dev/null \
+                    || true)"
+            fi
             if [[ -n "${ks_mtime}" && -n "${jar_build_date}" ]] \
-                && (( ks_mtime < jar_build_date )); then
+                && (( 10#${ks_mtime} < 10#${jar_build_date} )); then
                 log_warn "Keystore predates JAR build ${jar_build_date} (mtime ${ks_mtime}). Re-save: au_keystore.sh --resave"
             fi
         fi
+    fi
+
+    # Return 2 (warning) when no hard errors but key pair unconfirmed.
+    if [[ "${rc}" -eq 0 && "${key_pair_confirmed}" -eq 0 ]]; then
+        rc=2
     fi
 
     return "${rc}"
@@ -302,10 +342,14 @@ au_keystore_check() {
 # Function: au_keystore_backup
 # Purpose.: Create a 0600 tar.gz backup of the keystore directory in a 0700
 #           backup directory outside logs/ and patches/.
-# Args....: $1 - keystore directory path
+# Args....: $1 - keystore directory path (must be absolute)
 #           $2 - (optional) backup root (default: <parent>/<name>_backup)
 # Stdout..: path to created backup file
 # Returns.: 0 on success, non-zero on failure
+# Notes...: - Refuses a symlinked backup root.
+#           - Refuses a backup root inside AU_LOG_DIR or AU_DOWNLOAD_FOLDER.
+#           - Verifies chmod 700 on the backup directory.
+#           - Removes partial backup file on tar failure.
 # ------------------------------------------------------------------------------
 au_keystore_backup() {
     local ks_dir="$1"
@@ -314,21 +358,41 @@ au_keystore_backup() {
 
     ks_name="${ks_dir##*/}"
     ks_parent="${ks_dir%/*}"
+    # ks_parent is empty when ks_dir has no slash (relative path slipped through).
+    # Fall back to current directory to avoid putting backup inside the keystore.
+    [[ -z "${ks_parent}" ]] && ks_parent="$(pwd)"
     [[ -z "${backup_root}" ]] && backup_root="${ks_parent}/${ks_name}_backup"
+
+    # Refuse symlinked backup root
+    if [[ -L "${backup_root}" ]]; then
+        log_error "Backup root is a symlink, refusing: ${backup_root}"
+        return 1
+    fi
+
+    # Refuse backup root inside AU_LOG_DIR or AU_DOWNLOAD_FOLDER
+    if [[ -n "${AU_LOG_DIR:-}" && "${backup_root}" == "${AU_LOG_DIR}"* ]]; then
+        log_error "Backup root must not be inside AU_LOG_DIR (${AU_LOG_DIR}): ${backup_root}"
+        return 1
+    fi
+    if [[ -n "${AU_DOWNLOAD_FOLDER:-}" && "${backup_root}" == "${AU_DOWNLOAD_FOLDER}"* ]]; then
+        log_error "Backup root must not be inside AU_DOWNLOAD_FOLDER (${AU_DOWNLOAD_FOLDER}): ${backup_root}"
+        return 1
+    fi
 
     umask 077
     if [[ ! -d "${backup_root}" ]]; then
         mkdir -p "${backup_root}" || { log_error "Cannot create backup dir: ${backup_root}"; return 1; }
-        chmod 700 "${backup_root}"
-    else
-        chmod 700 "${backup_root}"
     fi
+    chmod 700 "${backup_root}" || { log_error "Cannot set 700 on backup dir: ${backup_root}"; return 1; }
 
     timestamp="$(date '+%Y%m%d_%H%M%S')"
     backup_file="${backup_root}/${ks_name}_${timestamp}.tar.gz"
 
-    tar -czf "${backup_file}" -C "${ks_parent}" "${ks_name}" 2>/dev/null \
-        || { log_error "Backup creation failed: ${backup_file}"; return 1; }
+    if ! tar -czf "${backup_file}" -C "${ks_parent}" "${ks_name}" 2>/dev/null; then
+        rm -f "${backup_file}"
+        log_error "Backup creation failed: ${backup_file}"
+        return 1
+    fi
     chmod 600 "${backup_file}"
     printf '%s\n' "${backup_file}"
 }

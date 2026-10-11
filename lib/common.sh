@@ -244,7 +244,11 @@ setup_error_handling() {
     trap error_handler ERR
 
     if [[ "${CLEANUP_ON_EXIT}" == "true" ]]; then
-        trap cleanup EXIT
+        # Always include _au_purge_tmpfiles so the library temp-file list is
+        # cleared even when a script overrides the EXIT trap via this function.
+        # Guard with declare -F: au_env.sh may not be loaded in all call sites.
+        # shellcheck disable=SC2016
+        trap 'if declare -F _au_purge_tmpfiles >/dev/null 2>&1; then _au_purge_tmpfiles; fi; cleanup' EXIT
     fi
 }
 

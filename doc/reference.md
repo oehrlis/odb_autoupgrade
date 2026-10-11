@@ -1,576 +1,177 @@
 # Reference
 
-Complete reference for OraDBA Extension Template scripts, tools, and components.
+Complete reference for `odb_autoupgrade` scripts, configuration and environment.
 
 ## Directory Structure
 
 ```text
-oradba_extension/
-├── .extension                 # Extension metadata
-├── .checksumignore           # Integrity check exclusions
-├── bin/                      # Executable scripts
-│   └── extension_tool.sh     # Example extension tool
-├── etc/                      # Configuration files
-│   └── extension-template.conf.example
-├── lib/                      # Library functions
-│   └── common.sh            # Common functions
-├── rcv/                     # RMAN recovery scripts
-│   └── extension_backup.rcv
-├── sql/                     # SQL scripts
-│   ├── extension_comprehensive.sql
-│   ├── extension_query.sql
-│   └── extension_simple.sql
-├── scripts/                 # Build and maintenance scripts
-│   ├── build.sh            # Build package
-│   └── rename-extension.sh # Rename helper
-└── tests/                   # Test suite
-    └── template_helpers.bats
+odb_autoupgrade/
+bin/
+  au_run.sh                 AutoUpgrade wrapper
+  au_update_jar.sh          JAR update
+  au_keystore.sh            MOS keystore management
+  au_check_connectivity.sh  Pre-flight connectivity check
+  au_patch_pin.sh           Write AU_PATCH pin file after download
+  au_patch_verify.sh        Verify download folder (size, SHA-256)
+  au_gen_config.sh          Generate per-host create_home / deploy config
+  au_home_verify.sh         Compare source and target Oracle Home
+  au_goldimage.sh           Self-built gold image management
+  au_log_cleanup.sh         Safe cleanup of global_log_dir
+  run_autoupgrade.sh        Deprecation shim (removed in 1.0)
+  update_autoupgrade.sh     Deprecation shim (removed in 1.0)
+  create_mos_keystore.sh    Deprecation shim (removed in 1.0)
+lib/
+  common.sh                 Generic: logging, error trap, parse_common_opts, load_config
+  au_lib.sh                 Loader: sources common.sh and au_* modules
+  au_env.sh                 Configuration precedence, defaults, rendering, pin file
+  au_net.sh                 Java resolution, proxy, truststore, au_curl
+  au_tools.sh               JAR manifest, keystore helpers, patches_info.json, log scan
+etc/
+  au_patch.cfg              Unified template for download, create_home and deploy
+  au_keystore.cfg           Minimal console config for au_keystore.sh
+  au_download.cfg           Deprecated alias (removed in 1.0)
+  au_create_home.cfg        Deprecated alias (removed in 1.0)
+  au_deploy.cfg             Deprecated alias (removed in 1.0)
+  autoupgrade.env.example   Site settings template
+  odb_autoupgrade.conf.example  OraDBA extension config example
+  env.sh                    Optional OraDBA env hook
+  aliases.sh                Optional OraDBA aliases hook
+  profiles/                 Shipped patch profiles
+  groups/os-fixed-gid.env   Example site group profile
+jar/                        Place autoupgrade.jar here (not committed)
+patches/                    Downloaded patch zips and metadata (not committed)
+keystore/                   MOS wallet (not committed)
+logs/                       AutoUpgrade runtime logs (not committed)
+doc/                        Documentation
+tests/                      BATS tests
+scripts/                    build.sh, rename-extension.sh
 ```
 
-## Scripts Reference
+## Scripts
 
-### bin/extension_tool.sh
+### au_run.sh
 
-Example executable script showing OraDBA integration patterns.
-
-**Usage:**
-
-```bash
-extension_tool.sh [OPTIONS]
-```
-
-**Options:**
+AutoUpgrade wrapper. All arguments are passed to AutoUpgrade; only `--help`, `--dry-run`, `--profile`,
+`--no-pin` and `-config` are intercepted.
 
 ```text
--h, --help              Show help message
--v, --verbose           Enable verbose output
--d, --database SID      Specify database SID
--q, --quiet             Suppress non-error output
+Usage: au_run.sh [--help] [--dry-run] [--profile <name|path>] [--no-pin]
+                 [-config <file>] [<autoupgrade-args>...]
 ```
 
-**Examples:**
+Wrapper-only options: `--help`, `--dry-run`, `--profile <name>`, `--no-pin`.
+AutoUpgrade options use single-dash form (`-config`, `-patch`, `-mode`, `-help`).
 
-```bash
-# Basic usage
-extension_tool.sh
+### au_update_jar.sh
 
-# With specific database
-extension_tool.sh -d ORCL
-
-# Verbose mode
-extension_tool.sh -v
-```
-
-**Exit Codes:**
-
-- `0` - Success
-- `1` - General error
-- `2` - Configuration error
-- `3` - Oracle environment error
-
-### scripts/build.sh
-
-Build distribution package for the extension.
-
-**Usage:**
-
-```bash
-./scripts/build.sh [VERSION]
-```
-
-**Arguments:**
-
-- `VERSION` - Version number (default: from VERSION file)
-
-**Process:**
-
-1. Validates extension structure
-2. Generates checksums for integrity verification
-3. Creates tarball with version
-4. Generates SHA256 checksum file
-5. Creates installer script
-
-**Output Files:**
+Download or install `autoupgrade.jar`. Compares `Implementation-Version`; refuses downgrade unless `--force`.
 
 ```text
-dist/
-├── oradba_extension_1.0.0.tar.gz
-├── oradba_extension_1.0.0.tar.gz.sha256
-└── oradba_extension_1.0.0_installer.sh
+Options: --from FILE|URL, --sha256 HEX, --keep N, --force, --yes, --no-verify
+Common:  -h, -V, -v, -d, -q, -n (--dry-run)
 ```
 
-**Examples:**
+### au_keystore.sh
 
-```bash
-# Build with version from VERSION file
-./scripts/build.sh
-
-# Build specific version
-./scripts/build.sh 1.2.3
-
-# Check build output
-ls -lh dist/
-```
-
-### scripts/rename-extension.sh
-
-Rename extension to create new extension from template.
-
-**Usage:**
-
-```bash
-./scripts/rename-extension.sh <new-name>
-```
-
-**Arguments:**
-
-- `new-name` - New extension name (lowercase, alphanumeric, hyphens/underscores)
-
-**Operations:**
-
-1. Validates new name format
-2. Updates `.extension` metadata
-3. Renames files and directories
-4. Updates references in scripts
-5. Updates documentation
-6. Updates test files
-
-**Examples:**
-
-```bash
-# Rename to 'backup'
-./scripts/rename-extension.sh backup
-
-# Rename to 'my_monitor'
-./scripts/rename-extension.sh my_monitor
-```
-
-**Files Modified:**
-
-- `.extension` - Updates EXTENSION_NAME
-- All files in `bin/`, `sql/`, `rcv/` - Renames containing 'extension'
-- Configuration files in `etc/`
-- Test files
-- Documentation files
-
-## SQL Scripts
-
-### sql/extension_simple.sql
-
-Simple SQL query template for basic database queries.
-
-**Purpose:** Demonstrate simple query execution pattern.
-
-**Usage:**
-
-```sql
-@extension_simple.sql
-```
-
-**Output:** Basic database information (database name, instance, version).
-
-### sql/extension_query.sql
-
-Parameterized SQL query template.
-
-**Purpose:** Show parameterized query pattern with bind variables.
-
-**Usage:**
-
-```sql
-@extension_query.sql PARAMETER_VALUE
-```
-
-**Parameters:**
-
-- Parameter values passed as script arguments
-
-**Output:** Query results based on parameters.
-
-### sql/extension_comprehensive.sql
-
-Complex SQL script with formatting and reporting.
-
-**Purpose:** Comprehensive query template with formatted output.
-
-**Features:**
-
-- Column formatting
-- Report headers/footers
-- Multiple queries
-- Summary statistics
-
-**Usage:**
-
-```sql
-@extension_comprehensive.sql
-```
-
-**Output:** Formatted report with multiple sections.
-
-## RMAN Scripts
-
-### rcv/extension_backup.rcv
-
-RMAN backup script template.
-
-**Purpose:** Template for RMAN backup operations.
-
-**Features:**
-
-- Backup configuration
-- Channel allocation
-- Backup sets
-- Archive log handling
-- Deletion policies
-
-**Usage:**
-
-```bash
-rman target / @extension_backup.rcv
-```
-
-**Configuration:**
-
-Edit script to customize:
-
-```sql
--- Configuration
-CONFIGURE RETENTION POLICY TO REDUNDANCY 2;
-CONFIGURE BACKUP OPTIMIZATION ON;
-
--- Backup commands
-BACKUP DATABASE PLUS ARCHIVELOG;
-DELETE NOPROMPT OBSOLETE;
-```
-
-**Logs:**
-
-RMAN logs written to `$ORADBA_PREFIX/log/rman_backup_<timestamp>.log`
-
-## Library Functions
-
-### lib/common.sh
-
-Common functions for extension scripts.
-
-**Functions:**
-
-#### log_message()
-
-Log message with timestamp.
-
-```bash
-log_message "INFO" "Starting process"
-```
-
-**Parameters:**
-
-- `$1` - Log level (INFO, WARN, ERROR)
-- `$2` - Message text
-
-#### validate_oracle_env()
-
-Validate Oracle environment is properly set.
-
-```bash
-if ! validate_oracle_env; then
-    echo "Oracle environment not set"
-    exit 1
-fi
-```
-
-**Checks:**
-
-- `ORACLE_HOME` is set and valid
-- `ORACLE_SID` is set
-- Oracle binaries are accessible
-
-**Returns:** 0 if valid, 1 if invalid
-
-#### get_oracle_version()
-
-Get Oracle database version.
-
-```bash
-version=$(get_oracle_version)
-echo "Oracle version: ${version}"
-```
-
-**Output:** Version string (e.g., "19.0.0.0.0")
-
-#### execute_sql()
-
-Execute SQL statement and return results.
-
-```bash
-result=$(execute_sql "SELECT name FROM v\$database")
-```
-
-**Parameters:**
-
-- `$1` - SQL statement
-
-**Output:** Query results
-
-**Returns:** 0 on success, 1 on error
-
-## Extension Metadata
-
-### .extension File
-
-Core metadata file for the extension.
-
-**Format:**
-
-```ini
-EXTENSION_NAME="extension"
-EXTENSION_VERSION="1.0.0"
-EXTENSION_PRIORITY="50"
-EXTENSION_DESCRIPTION="OraDBA extension template"
-```
-
-**Fields:**
-
-| Field                 | Description       | Format                  | Example            |
-|-----------------------|-------------------|-------------------------|--------------------|
-| EXTENSION_NAME        | Unique identifier | lowercase, alphanumeric | `backup`           |
-| EXTENSION_VERSION     | Semantic version  | MAJOR.MINOR.PATCH       | `1.2.3`            |
-| EXTENSION_PRIORITY    | Load order        | 1-99                    | `50`               |
-| EXTENSION_DESCRIPTION | Brief description | text                    | `Backup utilities` |
-
-### .checksumignore File
-
-Files/patterns excluded from integrity verification.
-
-**Syntax:**
+MOS keystore management.
 
 ```text
-# Comment
-pattern          # Exclude matching files
-directory/       # Exclude entire directory
-*.ext           # Wildcard pattern
-!include.txt    # Include (negates previous exclusion)
+Operations (default: --create): --create, --check, --resave, --backup
+Keystore options: --workdir DIR, --cfg PATH, --mos-user, --mos-pass-file,
+                  --ks-pass-file, --auto-login YES|SHARED|NO, --force, --yes,
+                  --backup-dir DIR, --keep N, --insecure-argv
+Common: -h, -V, -v, -d, -q, -n
 ```
 
-**Common Patterns:**
+### au_check_connectivity.sh
+
+Pre-flight connectivity check for endpoints, TLS issuer, keystore and JAR version.
 
 ```text
-# Always exclude
-.extension
-.checksumignore
-
-# Logs and temporary files
-log/
-*.log
-*.tmp
-*.swp
-
-# User configurations
-etc/*.conf
-!etc/*.conf.example
-
-# Credentials
-*.key
-*.pem
-*.pwd
-keystore/
-
-# Version control
-.git/
-.gitignore
+Options: --keystore DIR, --endpoints FILE, --timeout N, --quiet, --dry-run
+Exit codes: 0 all OK, 1 one or more FAIL, 2 only WARN
+Common: -h, -V, -v, -d, -q, -n
 ```
 
-## Makefile Targets
+### au_patch_pin.sh
 
-### make build
+Write `AU_PATCH` pin file from `patches_info.json`. Called automatically by `au_run.sh` after a download.
 
-Build distribution package.
-
-```bash
-make build
+```text
+Usage: au_patch_pin.sh [OPTIONS] [<download-folder>]
+Options: --force, --yes, --resolve-mrp
+Common: -h, -V, -v, -d, -q, -n
 ```
 
-**Actions:**
+### au_patch_verify.sh
 
-- Runs validation
-- Executes `scripts/build.sh`
-- Creates distribution files
+Verify a download folder against `patches_info.json` (size and SHA-256).
 
-### make clean
-
-Remove build artifacts.
-
-```bash
-make clean
+```text
+Usage: au_patch_verify.sh [OPTIONS] [<download-folder>]
+Common: -h, -V, -v, -d, -q
 ```
 
-**Removes:**
+### au_gen_config.sh
 
-- `dist/` directory
-- Temporary files
-- Build logs
+Generate a per-host config rendered from `etc/au_patch.cfg`.
 
-### make test
-
-Run test suite.
-
-```bash
-make test
+```text
+Usage: au_gen_config.sh --ru <version> [OPTIONS]
+Options: --source-home PATH, --oracle-base PATH, --edition EE|SE2,
+         --inventory PATH, --inventory-group GRP,
+         --groups-from HOME, --groups-standard, --skip-group-check,
+         --output FILE, --force
+Common: -h, -V, -v, -d, -q, -n
 ```
 
-**Executes:**
+### au_home_verify.sh
 
-- Bats test files in `tests/`
-- Validates extension structure
-- Checks file integrity
+Compare an Oracle Home against expected patches, binary options and OS groups.
 
-### make install
-
-Install extension locally for testing.
-
-```bash
-make install PREFIX=/path/to/oradba
+```text
+Usage: au_home_verify.sh --home <path> [OPTIONS]
+Options: --source-home PATH, --download-folder PATH, --patches-json FILE,
+         --edition EE|SE2, --no-patches, --no-binopts, --no-groups
+Common: -h, -V, -v, -d, -q
 ```
 
-**Parameters:**
+### au_goldimage.sh
 
-- `PREFIX` - OraDBA installation directory
+Self-built gold image management.
 
-**Actions:**
-
-- Extracts to `${PREFIX}/local/<extension>`
-- Sets permissions
-- Validates installation
-
-## Test Suite
-
-### tests/template_helpers.bats
-
-Test suite for template functionality.
-
-**Run Tests:**
-
-```bash
-# All tests
-bats tests/
-
-# Specific file
-bats tests/template_helpers.bats
-
-# Verbose output
-bats -t tests/template_helpers.bats
+```text
+Usage:
+  au_goldimage.sh --create --home <OH> --dest <dir> [OPTIONS]
+  au_goldimage.sh --verify <zip>
+  au_goldimage.sh --install <zip> --target <OH> [OPTIONS]
+Create options: --excl-files LIST
+Install options: --target PATH, --oracle-base PATH, --edition EE|SE2,
+                 --inventory PATH, --inventory-group GRP, --response FILE
+Common: -h, -V, -v, -d, -q, -n
 ```
 
-**Test Categories:**
+### au_log_cleanup.sh
 
-- Metadata validation
-- File structure checks
-- Script execution tests
-- Build process validation
-- Integrity verification
+Safe cleanup of AutoUpgrade `global_log_dir`.
 
-**Example Tests:**
-
-```bash
-@test "Extension metadata file exists" {
-    [ -f .extension ]
-}
-
-@test "Extension has valid name" {
-    grep -q "EXTENSION_NAME=" .extension
-}
-
-@test "Build script exists and is executable" {
-    [ -x scripts/build.sh ]
-}
+```text
+Options: --delete, --yes, --older-than DAYS, --keep-jobs N, --log-dir DIR, --log-file FILE
+Common: -h, -V, -v, -d, -q, -n (--dry-run)
 ```
 
-## Integration with OraDBA
+## Configuration Files
 
-### Loading Process
+- `etc/au_patch.cfg` - unified template; see [doc/configuration.md](configuration.md)
+- `etc/au_keystore.cfg` - minimal console config for `au_keystore.sh`
+- `etc/autoupgrade.env.example` - copy to `etc/autoupgrade.env` and adapt
 
-1. OraDBA discovers extension in `${ORADBA_LOCAL_BASE}/`
-2. Reads `.extension` metadata
-3. Validates extension structure
-4. Verifies checksums (optional)
-5. Sources shell scripts from `bin/`
-6. Adds SQL scripts to search path
-7. Registers RMAN scripts
+## Environment Variables
 
-### Environment Variables
+See [doc/configuration.md](configuration.md) for the complete variable table.
 
-Extensions have access to:
+Key groups:
 
-```bash
-ORADBA_BASE           # OraDBA installation
-ORADBA_PREFIX         # Configuration/logs
-ORADBA_LOCAL_BASE     # Local extensions
-ORACLE_BASE           # Oracle base
-ORACLE_HOME           # Oracle home
-ORACLE_SID            # Database SID
-```
-
-### Logging Integration
-
-Use OraDBA logging functions:
-
-```bash
-log_info "Information message"
-log_warn "Warning message"
-log_error "Error message"
-```
-
-**Log Location:** `${ORADBA_PREFIX}/log/oradba.log`
-
-### Alias Integration
-
-Register aliases in shell scripts:
-
-```bash
-# Register alias
-alias myext_backup='extension_tool.sh --backup'
-
-# Check if alias exists
-if alias myext_backup &>/dev/null; then
-    echo "Alias registered"
-fi
-```
-
-## API Reference
-
-### Shell Function API
-
-Functions available to extension scripts:
-
-| Function | Description | Returns |
-| -------- | ----------- | ------- |
-| `log_info` | Log info message | 0 |
-| `log_warn` | Log warning | 0 |
-| `log_error` | Log error | 0 |
-| `get_ora_env` | Get Oracle env var | string |
-| `set_ora_env` | Set Oracle environment | 0/1 |
-| `check_oracle_home` | Validate ORACLE_HOME | 0/1 |
-| `execute_sql_script` | Run SQL script | 0/1 |
-| `execute_rman_script` | Run RMAN script | 0/1 |
-
-### Exit Codes
-
-Standard exit codes for extension scripts:
-
-| Code | Meaning |
-| ---- | ------- |
-| 0 | Success |
-| 1 | General error |
-| 2 | Configuration error |
-| 3 | Oracle environment error |
-| 4 | Database connection error |
-| 5 | SQL execution error |
-| 6 | RMAN execution error |
-| 10+ | Extension-specific errors |
-
-## Next Steps
-
-- See [Installation](installation.md) for setup
-- See [Configuration](configuration.md) for customization
-- See [Development](development.md) for contributing
+- `AUTOUPGRADE_*` - wrapper settings (proxy, truststore, Java, debug)
+- `AU_*` - template values (patch, platform, paths, edition, groups)
+- `ORADBA_*` - OraDBA integration (config dir, extension base)

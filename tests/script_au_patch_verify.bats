@@ -451,3 +451,58 @@ JSONEOF
     [[ "${output}" == *"integrity"* ]]
     [[ "${output}" == *"authenticity"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# SHOULD 4 regression: names with '|' or newline must be reported INVALID NAME
+# (previously dead code because IFS='|' split consumed the pipe char)
+# ---------------------------------------------------------------------------
+
+@test "au_patch_verify.sh: name with pipe char reported as INVALID NAME" {
+    # jq now detects '|' in the name and emits the INVALID_NAME token; the shell
+    # reads it and reports the offending name.
+    local folder="${WORK_DIR}/patches/pipe_name"
+    mkdir -p "${folder}"
+    touch "${folder}/bug-map.json"
+    cat > "${folder}/patches_info.json" <<'JSONEOF'
+{
+  "patches": [
+    {
+      "files": [
+        {
+          "name": "evil|name.zip",
+          "SHA-256": "abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abc1",
+          "size": 100
+        }
+      ]
+    }
+  ]
+}
+JSONEOF
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        bash '${SCRIPT}' '${folder}' 2>&1
+    "
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"INVALID"* ]]
+}
+
+@test "au_patch_verify.sh: name with embedded newline reported as INVALID NAME" {
+    # A JSON string with \n in the name must be caught inside jq/python3 and
+    # reported as INVALID NAME (not silently accepted or split incorrectly).
+    local folder="${WORK_DIR}/patches/nl_name"
+    mkdir -p "${folder}"
+    touch "${folder}/bug-map.json"
+    # Use python3 to generate JSON with a real embedded newline in the name field
+    python3 -I -c "
+import json
+data = {'patches': [{'files': [{'name': 'bad\nname.zip', 'SHA-256': 'abc123'*10+'ab', 'size': 100}]}]}
+with open('${folder}/patches_info.json', 'w') as f:
+    json.dump(data, f)
+"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        bash '${SCRIPT}' '${folder}' 2>&1
+    "
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"INVALID"* ]]
+}

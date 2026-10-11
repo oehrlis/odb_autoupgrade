@@ -21,6 +21,11 @@
 #                     binary detection, dangerous-path guard, TOCTOU-safe
 #                     deletion, java.*autoupgrade.jar-only process detection,
 #                     named empty-dir prune (WP8)
+# 2026.10.10 oehrli - MUST 1: replace find -name glob deletion with direct
+#                     rm -f -- after re-validation (no glob expansion on
+#                     filenames like '*', '?', '[a]', '-rf'); SHOULD 4:
+#                     DELETE/PRUNE at log_warn level, PRUNE logged after
+#                     rmdir success, failures reported explicitly
 # ------------------------------------------------------------------------------
 
 # Guard on function existence.
@@ -340,16 +345,39 @@ au_logs_do_cleanup() {
 
         # --- Delete or list ---
         if [[ "${do_delete}" == "true" ]]; then
-            # TOCTOU-safe deletion: re-validate at delete time via find -P.
-            # -type f excludes symlinks; -mtime re-checks age; -P prevents
-            # symlink traversal in the parent directory.
-            local entry_dir entry_name
-            entry_dir="${entry%/*}"
-            entry_name="${entry##*/}"
-            find -P "${entry_dir}" -maxdepth 1 \
-                -name "${entry_name}" -type f \
-                -mtime "+${older_than}" -delete 2>/dev/null || true
-            log_info "DELETE: ${rel}"
+            # TOCTOU-safe deletion: never use find -name with the raw entry
+            # name because it is interpreted as a glob (a file literally named
+            # '*' would expand to everything). Re-validate the path directly:
+            # must still be a regular file (not a symlink), still inside the
+            # log dir, and parent dir must not be a symlink.
+            local _del_ok=true
+            local _entry_parent="${entry%/*}"
+            # Re-check: still a regular non-symlink file
+            if [[ ! -f "${entry}" || -L "${entry}" ]]; then
+                log_warn "DELETE skipped (vanished or changed to symlink): ${rel}"
+                (( AU_LOGS_SKIPPED++ )) || true
+                _del_ok=false
+            fi
+            # Re-check: parent dir not a symlink
+            if [[ "${_del_ok}" == "true" && -L "${_entry_parent}" ]]; then
+                log_warn "DELETE skipped (parent dir is a symlink): ${rel}"
+                (( AU_LOGS_SKIPPED++ )) || true
+                _del_ok=false
+            fi
+            # Re-check: canonical path still inside log_dir
+            if [[ "${_del_ok}" == "true" ]]; then
+                local _canon_e
+                _canon_e=$(cd -P "${_entry_parent}" 2>/dev/null && pwd -P) || true
+                if [[ -z "${_canon_e}" || "${_canon_e}/" != "${log_dir}/"* ]]; then
+                    log_warn "DELETE skipped (path escaped log dir): ${rel}"
+                    (( AU_LOGS_SKIPPED++ )) || true
+                    _del_ok=false
+                fi
+            fi
+            if [[ "${_del_ok}" == "true" ]]; then
+                rm -f -- "${entry}" 2>/dev/null || true
+                log_warn "DELETE: ${rel}"
+            fi
         else
             printf 'WOULD DELETE: %s\n' "${rel}"
         fi
@@ -357,12 +385,16 @@ au_logs_do_cleanup() {
     done < <(find -P "${log_dir}" -xdev -print0 2>/dev/null | sort -z)
 
     # After deletion: prune empty dirs (never cfgtoollogs or .autoupgrade tree).
-    # Name each directory before removal - no silent filter.
+    # Name each directory: log PRUNE only after rmdir succeeds, report failures.
     if [[ "${do_delete}" == "true" ]]; then
-        local empty_dir
+        local empty_dir _prune_rel
         while IFS= read -r -d '' empty_dir; do
-            log_info "PRUNE [empty-dir]: ${empty_dir#"${log_dir}/"}"
-            rmdir "${empty_dir}" 2>/dev/null || true
+            _prune_rel="${empty_dir#"${log_dir}/"}"
+            if rmdir "${empty_dir}" 2>/dev/null; then
+                log_warn "PRUNE [empty-dir]: ${_prune_rel}"
+            else
+                log_warn "PRUNE [empty-dir] FAILED (not empty or permission error): ${_prune_rel}"
+            fi
         done < <(find -P "${log_dir}" -mindepth 1 -depth -type d -empty \
             ! -path "${log_dir}/cfgtoollogs*" \
             ! -path "${log_dir}/.autoupgrade*" \

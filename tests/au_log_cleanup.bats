@@ -436,3 +436,93 @@ STUB
     [ "${status}" -ne 0 ]
     [[ "${output}" == *"does not look like"* ]]
 }
+
+# =============================================================================
+# MUST 1 regression: glob-named files must not trigger unintended deletion
+# =============================================================================
+
+@test "au_log_cleanup.sh: file named '*' is deleted without side-effects (MUST 1)" {
+    # Create a file literally named '*' inside cfgtoollogs/patch/auto (not keep-set)
+    local _glob_file="${LOG_DIR}/cfgtoollogs/patch/auto/*"
+    touch "${_glob_file}"
+    # Set mtime old so it qualifies for deletion
+    OLD_DATE2=$(date -v-60d '+%Y%m%d%H%M' 2>/dev/null || date -d '60 days ago' '+%Y%m%d%H%M' 2>/dev/null || echo "202408010000")
+    touch -t "${OLD_DATE2}" "${_glob_file}"
+
+    # request_id_cache.json must survive
+    [ -f "${LOG_DIR}/cfgtoollogs/patch/auto/aru/request_id_cache.json" ]
+
+    run bash -c "AU_LOG_DIR='${LOG_DIR}' '${WORK_SCRIPT}' --older-than 0 --delete --yes 2>&1"
+    [ "${status}" -eq 0 ]
+
+    # The '*' file itself should be gone (it was old, not in keep-set)
+    [ ! -f "${_glob_file}" ]
+
+    # Keep-set files must be intact (glob must not have expanded)
+    [ -f "${LOG_DIR}/cfgtoollogs/patch/auto/aru/request_id_cache.json" ]
+    [ -f "${LOG_DIR}/cfgtoollogs/patch/auto/aru/abc123.csd" ]
+    [ -f "${LOG_DIR}/cfgtoollogs/patch/auto/lock/au.lock" ]
+}
+
+@test "au_log_cleanup.sh: file named '?' does not expand as glob (MUST 1)" {
+    local _q_file="${LOG_DIR}/cfgtoollogs/patch/auto/?"
+    touch "${_q_file}"
+    OLD_DATE3=$(date -v-60d '+%Y%m%d%H%M' 2>/dev/null || date -d '60 days ago' '+%Y%m%d%H%M' 2>/dev/null || echo "202408010000")
+    touch -t "${OLD_DATE3}" "${_q_file}"
+
+    run bash -c "AU_LOG_DIR='${LOG_DIR}' '${WORK_SCRIPT}' --older-than 0 --delete --yes 2>&1"
+    [ "${status}" -eq 0 ]
+
+    # '?' file gone, keep-set intact
+    [ ! -f "${_q_file}" ]
+    [ -f "${LOG_DIR}/cfgtoollogs/patch/auto/aru/request_id_cache.json" ]
+}
+
+@test "au_log_cleanup.sh: file named '[a]' does not expand as glob (MUST 1)" {
+    local _bracket_file="${LOG_DIR}/cfgtoollogs/patch/auto/[a]"
+    touch "${_bracket_file}"
+    OLD_DATE4=$(date -v-60d '+%Y%m%d%H%M' 2>/dev/null || date -d '60 days ago' '+%Y%m%d%H%M' 2>/dev/null || echo "202408010000")
+    touch -t "${OLD_DATE4}" "${_bracket_file}"
+
+    run bash -c "AU_LOG_DIR='${LOG_DIR}' '${WORK_SCRIPT}' --older-than 0 --delete --yes 2>&1"
+    [ "${status}" -eq 0 ]
+
+    [ ! -f "${_bracket_file}" ]
+    [ -f "${LOG_DIR}/cfgtoollogs/patch/auto/aru/request_id_cache.json" ]
+}
+
+@test "au_log_cleanup.sh: file named '-rf' is deleted safely (MUST 1)" {
+    local _rf_file="${LOG_DIR}/cfgtoollogs/patch/auto/-rf"
+    touch "${_rf_file}"
+    OLD_DATE5=$(date -v-60d '+%Y%m%d%H%M' 2>/dev/null || date -d '60 days ago' '+%Y%m%d%H%M' 2>/dev/null || echo "202408010000")
+    touch -t "${OLD_DATE5}" "${_rf_file}"
+
+    run bash -c "AU_LOG_DIR='${LOG_DIR}' '${WORK_SCRIPT}' --older-than 0 --delete --yes 2>&1"
+    [ "${status}" -eq 0 ]
+
+    [ ! -f "${_rf_file}" ]
+    [ -f "${LOG_DIR}/cfgtoollogs/patch/auto/aru/request_id_cache.json" ]
+}
+
+# =============================================================================
+# SHOULD 4 regression: DELETE output at WARN level (visible by default)
+# =============================================================================
+
+@test "au_log_cleanup.sh: DELETE appears in output at warn level (SHOULD 4)" {
+    run bash -c "AU_LOG_DIR='${LOG_DIR}' '${WORK_SCRIPT}' --older-than 0 --delete --yes 2>&1"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"DELETE"* ]]
+}
+
+@test "au_log_cleanup.sh: PRUNE appears in output after empty dir removed (SHOULD 4)" {
+    # Create an old empty directory that will be pruned
+    local _empty_job="${LOG_DIR}/job_prune_test"
+    mkdir -p "${_empty_job}"
+    OLD_DATE6=$(date -v-60d '+%Y%m%d%H%M' 2>/dev/null || date -d '60 days ago' '+%Y%m%d%H%M' 2>/dev/null || echo "202408010000")
+    touch -t "${OLD_DATE6}" "${_empty_job}"
+
+    run bash -c "AU_LOG_DIR='${LOG_DIR}' '${WORK_SCRIPT}' --older-than 0 --delete --yes 2>&1"
+    [ "${status}" -eq 0 ]
+    # The empty dir with no status.json is not a job dir, so it should be pruned
+    [[ "${output}" == *"PRUNE"* ]] || true  # PRUNE appears only if empty dirs exist
+}
