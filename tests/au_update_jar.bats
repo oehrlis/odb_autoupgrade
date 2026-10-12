@@ -306,3 +306,13 @@ EOF
     # Just verify it ran successfully (staleness warning is best-effort)
     [ "${status}" -eq 0 ]
 }
+
+@test "invalid manifest version refused even without an installed JAR" {
+    local new_jar
+    new_jar="$(make_fake_au_jar 'a[$(touch X)]')"
+    run bash -c "cd '${WORK_DIR}' && bash '${SCRIPT}' --from '${new_jar}' --no-verify"
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"Invalid version string"* ]]
+    [ ! -f "${AU_JAR_DIR}/autoupgrade.jar" ]
+    [ ! -f "${WORK_DIR}/X" ]
+}

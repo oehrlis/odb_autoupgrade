@@ -204,7 +204,13 @@ find "$STAGE_DIR" -type d -exec chmod 755 {} +
 find "$STAGE_DIR" -type f -exec chmod 644 {} +
 find "$STAGE_DIR" -type f \( -path "${STAGE_DIR}/bin/*.sh" -o -path "${STAGE_DIR}/scripts/*.sh" \) -exec chmod 755 {} +
 
-tar -czf "$TARBALL" -C "$STAGE_DIR" "${FILES[@]}"
+# Neutral owner in the archive instead of the build user
+if [[ "$(tar --version 2>/dev/null)" == *"GNU tar"* ]]; then
+    TAR_OWNER_OPTS=(--owner=0 --group=0 --numeric-owner)
+else
+    TAR_OWNER_OPTS=(--uid 0 --gid 0 --uname root --gname root)
+fi
+tar "${TAR_OWNER_OPTS[@]}" -czf "$TARBALL" -C "$STAGE_DIR" "${FILES[@]}"
 echo "Created tarball: $TARBALL"
 
 if [[ "$CHECKSUM" == true ]]; then

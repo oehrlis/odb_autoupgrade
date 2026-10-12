@@ -346,6 +346,7 @@ do_work() {
     local new_ver old_ver=""
     new_ver="$(au_jar_version "${_JAR_TMP_FILE}" 2>/dev/null || true)"
     [[ -n "${new_ver}" ]] || die "Downloaded file has no Implementation-Version in its manifest - not an AutoUpgrade JAR: ${_JAR_TMP_FILE}"
+    au_version_validate "${new_ver}" || die "Invalid version string in JAR manifest; refusing to install: '${new_ver}'"
     [[ -f "${JAR_FILE}" ]] && old_ver="$(au_jar_version "${JAR_FILE}" 2>/dev/null || true)"
 
     if [[ -n "${old_ver}" ]]; then

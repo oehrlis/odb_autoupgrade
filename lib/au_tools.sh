@@ -9,7 +9,7 @@
 # Version....: v0.6.0
 # Purpose....: JAR manifest helpers, keystore state/check/backup, patches_info
 #              access, log scanning, SHA-256 and file stat helpers.
-#              Provides: au_jar_version, au_jar_version_numeric, au_version_compare,
+#              Provides: au_jar_version, au_version_compare,
 #              au_sha256, au_file_size, au_file_owner_uid, au_file_perms,
 #              au_keystore_state, au_keystore_check, au_keystore_backup,
 #              au_prune_backups, au_patches_info_ru, au_log_scan.
@@ -54,23 +54,6 @@ au_jar_version() {
 }
 
 # ------------------------------------------------------------------------------
-# Function: au_jar_version_numeric
-# Purpose.: Convert dotted version string to three space-separated integers.
-#           "26.6.260925" -> "26 6 260925"
-# Args....: $1 - version string from au_jar_version
-# Stdout..: three space-separated integers
-# Returns.: 0
-# ------------------------------------------------------------------------------
-au_jar_version_numeric() {
-    local v="$1"
-    local major minor build rest
-    major="${v%%.*}"; rest="${v#*.}"
-    minor="${rest%%.*}"; build="${rest#*.}"
-    [[ "${build}" == "${minor}" ]] && build=0   # only two tokens
-    printf '%s %s %s\n' "${major}" "${minor}" "${build}"
-}
-
-# ------------------------------------------------------------------------------
 # Function: au_version_validate
 # Purpose.: Reject any version string that contains non-digit/non-dot chars.
 #           Guards au_version_compare against arithmetic code injection
@@ -101,11 +84,13 @@ au_version_compare() {
         printf 'ERROR: invalid version string: %s\n' "$2" >&2
         return 3
     fi
+    # Compare every dotted part (up to 5), missing parts count as 0
     local -a a b
-    read -r -a a <<< "$(au_jar_version_numeric "$1")"
-    read -r -a b <<< "$(au_jar_version_numeric "$2")"
-    local i
-    for i in 0 1 2; do
+    IFS=. read -r -a a <<< "$1"
+    IFS=. read -r -a b <<< "$2"
+    local i n=${#a[@]}
+    (( ${#b[@]} > n )) && n=${#b[@]}
+    for (( i = 0; i < n; i++ )); do
         local av="${a[$i]:-0}" bv="${b[$i]:-0}"
         if (( 10#${av} > 10#${bv} )); then return 1; fi
         if (( 10#${av} < 10#${bv} )); then return 2; fi
@@ -362,6 +347,18 @@ au_keystore_backup() {
     # Fall back to current directory to avoid putting backup inside the keystore.
     [[ -z "${ks_parent}" ]] && ks_parent="$(pwd)"
     [[ -z "${backup_root}" ]] && backup_root="${ks_parent}/${ks_name}_backup"
+
+    # A keystore path ending in . or .. gives a backup root inside the keystore
+    if [[ -z "${ks_name}" || "${ks_name}" == "." || "${ks_name}" == ".." ]]; then
+        log_error "Keystore path must be resolved (no trailing . or ..): ${ks_dir}"
+        return 1
+    fi
+    # Refuse a backup root inside the keystore: later backups would contain the
+    # earlier ones and recreating the keystore would delete them
+    if [[ "${backup_root}" == "${ks_dir}" || "${backup_root}" == "${ks_dir}/"* ]]; then
+        log_error "Backup root must not be inside the keystore (${ks_dir}): ${backup_root}"
+        return 1
+    fi
 
     # Refuse symlinked backup root
     if [[ -L "${backup_root}" ]]; then

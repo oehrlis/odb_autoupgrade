@@ -484,6 +484,14 @@ validate_inputs() {
     if [[ "${WORKDIR}" != /* ]]; then
         WORKDIR="$(pwd)/${WORKDIR}"
     fi
+    # Resolve . and .. so the keystore name is never "." or ".."; logical
+    # resolution keeps a symlinked WORKDIR visible for the symlink refusal below
+    if [[ -d "${WORKDIR}" ]]; then
+        WORKDIR="$(cd -L -- "${WORKDIR}" && pwd -L)" || die "Cannot resolve WORKDIR: ${WORKDIR}"
+    fi
+    case "${WORKDIR##*/}" in
+        ""|.|..) die "WORKDIR must name a keystore directory, not ${WORKDIR}" ;;
+    esac
 
     # --check and --backup do not need au_run.sh or expect
     if [[ "${OPERATION}" == "check" || "${OPERATION}" == "backup" ]]; then

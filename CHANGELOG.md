@@ -57,6 +57,9 @@
 - Higher configuration levels are chosen from the caller environment only, never by a lower-level file
 - Readonly conflicts, template lines without `=`, duplicate `-mode` and missing `envsubst` abort with a message;
   renderer temp files are removed on every exit
+- Keystore backups refuse a backup root inside the keystore; `--workdir .` and `..` are resolved first
+- Version comparison covers every dotted part, so a downgrade in a fourth part is no longer seen as equal
+- Release tarball entries carry owner 0/0 instead of the build user
 
 ## 0.5.0 - 2026-10-08
 

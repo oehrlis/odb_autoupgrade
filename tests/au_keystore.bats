@@ -146,6 +146,16 @@ make_cfg() {
     [ "${status}" -eq 2 ]
 }
 
+@test "au_version_compare: compares a fourth part" {
+    source "${TOOLS_LIB}"
+    run au_version_compare "26.6.260925.2" "26.6.260925.1"
+    [ "${status}" -eq 1 ]
+    run au_version_compare "26.6.260925" "26.6.260925.1"
+    [ "${status}" -eq 2 ]
+    run au_version_compare "26.6.260925.0" "26.6.260925"
+    [ "${status}" -eq 0 ]
+}
+
 @test "au_sha256: returns hash string" {
     source "${TOOLS_LIB}"
     local f="${WORK_DIR}/testfile"
@@ -587,4 +597,36 @@ EOF
             --cfg "${cfg}" --mos-user test@example.com \
             --mos-pass-file "${pass_file}" --insecure-argv --ks-pass testks
     [ "${status}" -eq 0 ]
+}
+
+@test "au_keystore_backup: refuses keystore path ending in ." {
+    source "${TOOLS_LIB}"
+    make_wallet_files "${WORK_DIR}/keystore"
+    run au_keystore_backup "${WORK_DIR}/keystore/."
+    [ "${status}" -ne 0 ]
+    [ ! -d "${WORK_DIR}/keystore/._backup" ]
+}
+
+@test "au_keystore_backup: refuses backup root inside the keystore" {
+    source "${TOOLS_LIB}"
+    make_wallet_files "${WORK_DIR}/keystore"
+    run au_keystore_backup "${WORK_DIR}/keystore" "${WORK_DIR}/keystore/bak"
+    [ "${status}" -ne 0 ]
+    [ ! -d "${WORK_DIR}/keystore/bak" ]
+}
+
+@test "--backup --workdir . from inside the keystore: backup outside keystore" {
+    make_wallet_files "${WORK_DIR}/keystore"
+    run bash -c "cd '${WORK_DIR}/keystore' && bash '${SCRIPT}' --backup --workdir ."
+    [ "${status}" -eq 0 ]
+    [ ! -d "${WORK_DIR}/keystore/._backup" ]
+    local bak_count
+    bak_count="$(ls "${WORK_DIR}/keystore_backup"/*.tar.gz 2>/dev/null | wc -l | tr -d ' ')"
+    [ "${bak_count}" -ge 1 ]
+}
+
+@test "--backup --workdir / is refused" {
+    mkdir -p "${WORK_DIR}/keystore"
+    run bash -c "cd '${WORK_DIR}/keystore' && bash '${SCRIPT}' --backup --workdir /"
+    [ "${status}" -ne 0 ]
 }
