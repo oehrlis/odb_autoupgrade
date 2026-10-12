@@ -1,5 +1,5 @@
 name: odb_autoupgrade
-version: 0.5.0
+version: 0.6.0
 description: Oracle AutoUpgrade patching tooling (JAR update, MOS keystore, patch download)
 author: Stefan Oehrli
 enabled: true
