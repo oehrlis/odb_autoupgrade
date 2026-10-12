@@ -232,7 +232,7 @@ make_cfg() {
 @test "--check fails when keystore dir missing" {
     run bash "${SCRIPT}" --check --workdir "${WORK_DIR}/no_such_dir"
     [ "${status}" -ne 0 ]
-    [[ "${output}" == *"not found"* || "${stderr}" == *"not found"* ]]
+    [[ "${output}" == *"not found"* ]]
 }
 
 @test "--check warns on wrong dir permissions" {
@@ -240,7 +240,7 @@ make_cfg() {
     chmod 755 "${WORK_DIR}/keystore"
     run bash "${SCRIPT}" --check --workdir "${WORK_DIR}/keystore"
     [ "${status}" -ne 0 ]
-    [[ "${output}${output}" == *"700"* || "${stderr}" == *"700"* ]]
+    [[ "${output}" == *"700"* ]]
 }
 
 @test "--check warns on wrong ewallet.p12 permissions" {
@@ -248,7 +248,7 @@ make_cfg() {
     chmod 644 "${WORK_DIR}/keystore/ewallet.p12"
     run bash "${SCRIPT}" --check --workdir "${WORK_DIR}/keystore"
     [ "${status}" -ne 0 ]
-    [[ "${output}${output}" == *"600"* || "${stderr}" == *"600"* ]]
+    [[ "${output}" == *"600"* ]]
 }
 
 @test "--check fails on symlinked keystore dir" {
@@ -257,7 +257,7 @@ make_cfg() {
     ln -s "${WORK_DIR}/real_ks" "${WORK_DIR}/link_ks"
     run bash "${SCRIPT}" --check --workdir "${WORK_DIR}/link_ks"
     [ "${status}" -ne 0 ]
-    [[ "${output}${output}" == *"symlink"* || "${stderr}" == *"symlink"* ]]
+    [[ "${output}" == *"symlink"* ]]
 }
 
 @test "--check warns on .autoupgrade subdir group-writable" {
@@ -266,7 +266,7 @@ make_cfg() {
     chmod 775 "${WORK_DIR}/keystore/.autoupgrade"
     run bash "${SCRIPT}" --check --workdir "${WORK_DIR}/keystore"
     [ "${status}" -ne 0 ]
-    [[ "${output}${output}" == *"group/world-writable"* || "${stderr}" == *"group/world-writable"* ]]
+    [[ "${output}" == *"group/world-writable"* ]]
 }
 
 @test "--check warns when mkstore missing PKEY1/PKEY2" {
@@ -308,7 +308,7 @@ make_cfg() {
 @test "--backup fails when workdir does not exist" {
     run bash "${SCRIPT}" --backup --workdir "${WORK_DIR}/no_such_dir"
     [ "${status}" -ne 0 ]
-    [[ "${output}${output}" == *"not found"* || "${stderr}" == *"not found"* ]]
+    [[ "${output}" == *"not found"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -332,7 +332,7 @@ make_cfg() {
     run bash "${SCRIPT}" --create --workdir "${WORK_DIR}/keystore2" \
         --cfg "${cfg}" --insecure-argv --mos-pass pass1 --ks-pass pass2
     [ "${status}" -ne 0 ]
-    [[ "${output}${output}" == *"mos-user"* || "${stderr}" == *"mos-user"* ]]
+    [[ "${output}" == *"mos-user"* ]]
 }
 
 @test "--create refuses symlinked workdir" {
@@ -344,7 +344,7 @@ make_cfg() {
         --cfg "${cfg}" --mos-user test@example.com \
         --insecure-argv --mos-pass pass1 --ks-pass pass2
     [ "${status}" -ne 0 ]
-    [[ "${output}${output}" == *"symlink"* || "${stderr}" == *"symlink"* ]]
+    [[ "${output}" == *"symlink"* ]]
 }
 
 @test "--create requires --insecure-argv to use --mos-pass on argv" {
@@ -354,7 +354,7 @@ make_cfg() {
         --cfg "${cfg}" --mos-user test@example.com \
         --mos-pass pass1 --ks-pass pass2
     [ "${status}" -ne 0 ]
-    [[ "${output}${output}" == *"insecure-argv"* || "${stderr}" == *"insecure-argv"* ]]
+    [[ "${output}" == *"insecure-argv"* ]]
 }
 
 @test "--create fails when cfg not found" {
@@ -362,13 +362,13 @@ make_cfg() {
         --cfg /nonexistent/file.cfg --mos-user test@example.com \
         --insecure-argv --mos-pass pass1 --ks-pass pass2
     [ "${status}" -ne 0 ]
-    [[ "${output}${output}" == *"not found"* || "${stderr}" == *"not found"* ]]
+    [[ "${output}" == *"not found"* ]]
 }
 
 @test "--auto-login rejects invalid mode" {
     run bash "${SCRIPT}" --check --auto-login INVALID --workdir "${WORK_DIR}/keystore"
     [ "${status}" -ne 0 ]
-    [[ "${output}${output}" == *"YES, SHARED, or NO"* || "${stderr}" == *"YES, SHARED, or NO"* ]]
+    [[ "${output}" == *"YES, SHARED, or NO"* ]]
 }
 
 @test "--help prints usage and exits 0" {

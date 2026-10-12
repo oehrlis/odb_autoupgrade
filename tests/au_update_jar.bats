@@ -118,7 +118,7 @@ EOF
 @test "--from fails for nonexistent file" {
     run bash "${SCRIPT}" --from /nonexistent/file.jar
     [ "${status}" -ne 0 ]
-    [[ "${output}${output}" == *"not found"* || "${stderr}" == *"not found"* ]]
+    [[ "${output}" == *"not found"* ]]
 }
 
 @test "--from rejects file with wrong ZIP magic" {
@@ -128,7 +128,7 @@ EOF
     dd if=/dev/zero bs=1024 count=1026 >> "${bad}" 2>/dev/null
     run bash "${SCRIPT}" --from "${bad}" --no-verify
     [ "${status}" -ne 0 ]
-    [[ "${output}${output}" == *"magic"* || "${stderr}" == *"magic"* ]]
+    [[ "${output}" == *"magic"* ]]
 }
 
 @test "--from rejects JAR without Implementation-Version" {
@@ -143,7 +143,7 @@ EOF
     rm -rf "${mdir}"
     run bash "${SCRIPT}" --from "${jar}" --no-verify
     [ "${status}" -ne 0 ]
-    [[ "${output}${output}" == *"Implementation-Version"* || "${stderr}" == *"Implementation-Version"* ]]
+    [[ "${output}" == *"Implementation-Version"* ]]
 }
 
 @test "--from rejects file smaller than 1 MB" {
@@ -151,7 +151,7 @@ EOF
     printf 'PK' > "${small}"
     run bash "${SCRIPT}" --from "${small}" --no-verify
     [ "${status}" -ne 0 ]
-    [[ "${output}${output}" == *"too small"* || "${stderr}" == *"too small"* ]]
+    [[ "${output}" == *"too small"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -168,7 +168,7 @@ EOF
     run bash "${SCRIPT}" --from "${new_jar}" --no-verify
     rm -f "${old_jar}"
     [ "${status}" -ne 0 ]
-    [[ "${output}${output}" == *"Downgrade refused"* || "${stderr}" == *"Downgrade refused"* ]]
+    [[ "${output}" == *"Downgrade refused"* ]]
 }
 
 @test "downgrade allowed with --force --yes" {
@@ -203,7 +203,7 @@ EOF
     fake="$(make_fake_au_jar "26.6.260925")"
     run bash "${SCRIPT}" --from "${fake}" --sha256 "000000aabbcc" --no-verify
     [ "${status}" -ne 0 ]
-    [[ "${output}${output}" == *"mismatch"* || "${stderr}" == *"mismatch"* ]]
+    [[ "${output}" == *"mismatch"* ]]
 }
 
 @test "--sha256 match proceeds" {
@@ -254,7 +254,7 @@ EOF
 @test "--keep requires non-negative integer" {
     run bash "${SCRIPT}" --keep abc
     [ "${status}" -ne 0 ]
-    [[ "${output}${output}" == *"integer"* || "${stderr}" == *"integer"* ]]
+    [[ "${output}" == *"integer"* ]]
 }
 
 # ---------------------------------------------------------------------------
