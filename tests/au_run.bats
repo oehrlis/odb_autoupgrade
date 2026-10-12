@@ -1064,3 +1064,24 @@ EOF
     run bash -c "ls '${tdir}' | grep -c au_render || true"
     [ "${output}" = "0" ]
 }
+
+# ---------------------------------------------------------------------------
+# SHOULD 5 regression: AU_JAR_DIR honoured by au_run.sh
+# ---------------------------------------------------------------------------
+
+@test "au_run.sh: AU_JAR_DIR overrides default jar directory" {
+    make_mock_java 11
+    # Place JAR in a custom directory (not in REPO_ROOT/jar)
+    local custom_jar_dir="${WORK_DIR}/custom_jar"
+    mkdir -p "${custom_jar_dir}"
+    touch "${custom_jar_dir}/autoupgrade.jar"
+    run bash -c "
+        export AU_JAR_DIR='${custom_jar_dir}'
+        export AUTOUPGRADE_JAVA_HOME='${WORK_DIR}'
+        export AUTOUPGRADE_TRUSTSTORE_CANDIDATES='/nonexistent'
+        export AUTOUPGRADE_DRY_RUN=true
+        bash '${SCRIPT}' -mode analyze 2>&1
+    "
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"${custom_jar_dir}"* || "${output}" == *"autoupgrade.jar"* ]]
+}

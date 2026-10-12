@@ -340,8 +340,13 @@ au_load_config() {
         log_debug "Config level-3: AUTOUPGRADE_ENV_FILE not set in caller env, skipped"
     fi
 
-    # Step 3: Level 2a - profile (WP13 placeholder)
-    log_debug "Config level-2a: profile not active (WP13 placeholder)"
+    # Step 3: Level 2a - profile (WP13: applied when _AU_PROFILE_PATH is set)
+    if [[ -n "${_AU_PROFILE_PATH:-}" ]]; then
+        au_apply_profile "${_AU_PROFILE_PATH}"
+        log_debug "Config level-2a: profile applied: ${_AU_PROFILE_PATH}"
+    else
+        log_debug "Config level-2a: no profile selected"
+    fi
 
     # Step 4: Restore caller snapshot - caller environment wins over all files.
     for _i in "${!_snap_names[@]}"; do
@@ -358,6 +363,23 @@ au_load_config() {
         # shellcheck disable=SC2163
         export "${_n}=${_snap_values[_i]}" 2>/dev/null || true
     done
+
+    # After snapshot restore: if the caller had AU_PATCH set (non-empty), the
+    # profile value was overridden by the caller environment (level 2 > 2a).
+    # Reset _au_patch_from_profile so au_read_pin treats AU_PATCH as a
+    # caller-set value; the pin will then not override it either (level 6 < 2).
+    # Design ref: "Configuration precedence" and Q13 in doc/design.md.
+    local _snap_au_patch=""
+    for _i in "${!_snap_names[@]}"; do
+        if [[ "${_snap_names[_i]}" == "AU_PATCH" ]]; then
+            _snap_au_patch="${_snap_values[_i]}"
+            break
+        fi
+    done
+    if [[ -n "${_snap_au_patch}" ]]; then
+        _au_patch_from_profile=false
+        log_debug "Config: AU_PATCH='${_snap_au_patch}' from caller env overrides profile; pin will not apply"
+    fi
 
     # Step 5: Apply defaults (AU_DOWNLOAD_FOLDER needed before pin file read)
     au_set_defaults_no_patch
@@ -416,16 +438,29 @@ au_set_defaults() {
 
 # ------------------------------------------------------------------------------
 # Function: au_read_pin
-# Purpose.: Read AU_PATCH from the pin file if not already set.
+# Purpose.: Read AU_PATCH from the pin file if not already set by the caller
+#           environment, or if it was set by the profile (pin wins over profile
+#           per design step 7). The caller environment always wins over the pin.
 # Notes...: Pin file is parsed line-by-line (never sourced).
 #           Security: refuse symlink, numeric owner check, refuse g/o-writable.
 #           Only AU_PATCH=<value> accepted; value must match ^[A-Za-z0-9_.,:-]+$
+#           When AU_PATCH is set by the caller (not profile) and a pin file
+#           exists, a WARN is logged naming the pin file.
 # ------------------------------------------------------------------------------
 au_read_pin() {
     _au_patch_pinned=false
-    [[ -n "${AU_PATCH:-}" ]] && return 0
 
     local _patch_env="${AU_DOWNLOAD_FOLDER}/au_patch.env"
+
+    # If AU_PATCH is set and came from caller env (not from profile), do not
+    # override it; warn if a pin file also exists.
+    if [[ -n "${AU_PATCH:-}" && "${_au_patch_from_profile:-false}" != true ]]; then
+        if [[ -f "${_patch_env}" ]]; then
+            log_warn "AU_PATCH set in caller environment; pin file ${_patch_env} not applied (caller wins)"
+        fi
+        return 0
+    fi
+
     [[ -f "${_patch_env}" ]] || return 0
 
     # Security: refuse symlink
@@ -575,9 +610,9 @@ au_check_cfg_vars() {
     done < <(
         {
             grep -oE '\$[{][A-Za-z_][A-Za-z0-9_]*[}]' <<< "${filtered}" \
-                | sed -e 's/^\$[{]//' -e 's/[}]$//'
+                | sed -e 's/^\$[{]//' -e 's/[}]$//' || true
             grep -oE '\$[A-Za-z_][A-Za-z0-9_]*' <<< "${filtered}" \
-                | sed 's/^\$//'
+                | sed 's/^\$//' || true
         } 2>/dev/null | sort -u
     )
 
@@ -767,4 +802,512 @@ au_check_cfg_mode() {
     esac
 
     [[ "${_fail}" == false ]] || exit 1
+}
+
+# =============================================================================
+# WP13: Patch profiles
+# =============================================================================
+
+# Module-level: path to the selected profile (set by au_find_profile / --profile)
+_AU_PROFILE_PATH=""
+
+# Module-level: set to true when au_apply_profile sets AU_PATCH (pin wins over it)
+_au_patch_from_profile=false
+
+# Allowed keys in a profile file (allow-list; unknown keys are fatal)
+_AU_PROFILE_ALLOWED_KEYS=(
+    AU_PROFILE_DESC
+    AU_PATCH
+    AU_TARGET_VERSION
+    AU_PLATFORM
+    AU_GOLD_IMAGE
+    AU_EDITION
+)
+
+# ------------------------------------------------------------------------------
+# Function: _au_validate_group_name
+# Purpose.: Validate an OS group name: ^[A-Za-z0-9_.-]{1,32}$
+# Args....: $1 - group name value
+#           $2 - variable name (for the error message)
+# Returns.: 0 if valid; exits via die on violation.
+# ------------------------------------------------------------------------------
+_au_validate_group_name() {
+    local _val="$1" _varname="$2"
+    [[ -z "${_val}" ]] && return 0   # empty means unset; callers handle that separately
+    if [[ ! "${_val}" =~ ^[A-Za-z0-9_.-]{1,32}$ ]]; then
+        die "Invalid group name for ${_varname}='${_val}' (must match ^[A-Za-z0-9_.-]{1,32}$)"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Function: au_find_profile
+# Purpose.: Resolve a profile name or path to an absolute file path.
+#           A value containing '/' is treated as an explicit path.
+#           A bare name is searched in:
+#             1. AU_PROFILE_DIR (if set)
+#             2. ${ORADBA_CONFIG_DIR}/autoupgrade/profiles (if set)
+#             3. ${AUTOUPGRADE_BASE}/etc/profiles/ (shipped)
+#           First match wins; shadowed files are reported by name.
+# Args....: $1 - name or path
+# Returns.: 0; sets _AU_PROFILE_PATH; exits 1 if not found.
+# ------------------------------------------------------------------------------
+au_find_profile() {
+    local _input="$1"
+    _AU_PROFILE_PATH=""
+
+    # Explicit path
+    if [[ "${_input}" == */* ]]; then
+        if [[ -f "${_input}" ]]; then
+            _AU_PROFILE_PATH="${_input}"
+            log_debug "Profile: explicit path: ${_AU_PROFILE_PATH}"
+            return 0
+        else
+            die "Profile: explicit path not found: ${_input}"
+        fi
+    fi
+
+    # Name lookup: build search dirs
+    local -a _search_dirs=()
+    [[ -n "${AU_PROFILE_DIR:-}" ]] && _search_dirs+=("${AU_PROFILE_DIR}")
+    if [[ -n "${ORADBA_CONFIG_DIR:-}" ]]; then
+        _search_dirs+=("${ORADBA_CONFIG_DIR}/autoupgrade/profiles")
+    fi
+    _search_dirs+=("${AUTOUPGRADE_BASE}/etc/profiles")
+
+    local _name="${_input%.profile}"  # strip .profile suffix if provided
+    local -a _found=()
+    local _dir
+    for _dir in "${_search_dirs[@]}"; do
+        local _candidate="${_dir}/${_name}.profile"
+        if [[ -f "${_candidate}" ]]; then
+            _found+=("${_candidate}")
+        fi
+    done
+
+    if [[ "${#_found[@]}" -eq 0 ]]; then
+        log_error "Profile '${_input}' not found. Searched:"
+        for _dir in "${_search_dirs[@]}"; do
+            log_error "  ${_dir}/${_name}.profile"
+        done
+        exit 1
+    fi
+
+    _AU_PROFILE_PATH="${_found[0]}"
+    log_debug "Profile: using: ${_AU_PROFILE_PATH}"
+
+    if [[ "${#_found[@]}" -gt 1 ]]; then
+        local _i
+        log_warn "Profile '${_name}': shadowed by '${_AU_PROFILE_PATH}'. Other matches (not used):"
+        for _i in "${!_found[@]}"; do
+            [[ "${_i}" -eq 0 ]] && continue
+            log_warn "  ${_found[_i]}"
+        done
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Function: au_apply_profile
+# Purpose.: Parse a profile file with an allow-list and apply allowed keys to
+#           the current environment. Never sourced; parsed line-by-line.
+#           Unknown keys are fatal. File security: same as env files.
+# Args....: $1 - absolute path to the .profile file
+# Returns.: 0; exports profile keys; exits 1 on security violation or bad key.
+# Notes...: Values are literal (no variable expansion).
+#           AU_PATCH in the profile is overridden by the pin file later
+#           (pin file wins at level 6).
+# ------------------------------------------------------------------------------
+au_apply_profile() {
+    local _profile_file="$1"
+
+    [[ -f "${_profile_file}" ]] || die "Profile file not found: ${_profile_file}"
+
+    # Full Decision-5 security checks: symlink chain per-hop parent check,
+    # numeric uid fail-closed, mode, TOCTOU-safe fd open.
+    _AU_REAL_FD=""
+    _au_check_file_security "${_profile_file}" "profile"
+    # _AU_REAL_FD is now open and pointing to the resolved file.
+
+    # Parse line by line with allow-list; read from the open fd (TOCTOU-safe).
+    local _lineno=0 _line _trim _key _val _allowed _ok
+    while IFS= read -r _line || [[ -n "${_line}" ]]; do
+        _lineno=$(( _lineno + 1 ))
+        _trim="${_line#"${_line%%[![:space:]]*}"}"
+        _trim="${_trim%"${_trim##*[![:space:]]}"}"
+        [[ -z "${_trim}" || "${_trim}" == '#'* ]] && continue
+
+        if [[ "${_trim}" != *'='* ]]; then
+            exec {_AU_REAL_FD}<&-
+            die "Profile ${_profile_file} line ${_lineno}: no '=' separator: ${_trim}"
+        fi
+
+        _key="${_trim%%=*}"
+        _key="${_key#"${_key%%[![:space:]]*}"}"
+        _key="${_key%"${_key##*[![:space:]]}"}"
+        _val="${_trim#*=}"
+        # Strip optional surrounding quotes
+        if [[ "${_val}" == '"'*'"' ]]; then
+            _val="${_val#\"}"; _val="${_val%\"}"
+        elif [[ "${_val}" == "'"*"'" ]]; then
+            _val="${_val#\'}"; _val="${_val%\'}"
+        fi
+
+        # Allow-list check
+        _ok=false
+        for _allowed in "${_AU_PROFILE_ALLOWED_KEYS[@]}"; do
+            [[ "${_key}" == "${_allowed}" ]] && _ok=true && break
+        done
+        if [[ "${_ok}" == false ]]; then
+            exec {_AU_REAL_FD}<&-
+            die "Profile ${_profile_file} line ${_lineno}: unknown key '${_key}' (allowed: ${_AU_PROFILE_ALLOWED_KEYS[*]})"
+        fi
+
+        # Validate specific keys
+        case "${_key}" in
+            AU_GOLD_IMAGE)
+                if [[ ! "${_val}" =~ ^(YES|NO|AUTO|ALL)$ ]]; then
+                    exec {_AU_REAL_FD}<&-
+                    die "Profile ${_profile_file} line ${_lineno}: AU_GOLD_IMAGE must be YES|NO|AUTO|ALL, got: ${_val}"
+                fi
+                ;;
+            AU_EDITION)
+                if [[ ! "${_val}" =~ ^(EE|SE2)$ ]]; then
+                    exec {_AU_REAL_FD}<&-
+                    die "Profile ${_profile_file} line ${_lineno}: AU_EDITION must be EE|SE2, got: ${_val}"
+                fi
+                ;;
+            AU_TARGET_VERSION)
+                if [[ ! "${_val}" =~ ^[0-9]{2}$ ]]; then
+                    exec {_AU_REAL_FD}<&-
+                    die "Profile ${_profile_file} line ${_lineno}: AU_TARGET_VERSION must be a 2-digit number, got: ${_val}"
+                fi
+                ;;
+            AU_PLATFORM)
+                if [[ ! "${_val}" =~ ^[A-Z0-9._]+$ ]]; then
+                    exec {_AU_REAL_FD}<&-
+                    die "Profile ${_profile_file} line ${_lineno}: AU_PLATFORM must match ^[A-Z0-9._]+$, got: ${_val}"
+                fi
+                ;;
+            AU_PATCH)
+                # Validate patch value; keywords validated later by au_validate_profile
+                if [[ ! "${_val}" =~ ^[A-Za-z0-9_.,:-]+$ ]]; then
+                    exec {_AU_REAL_FD}<&-
+                    die "Profile ${_profile_file} line ${_lineno}: AU_PATCH contains invalid characters: ${_val}"
+                fi
+                ;;
+        esac
+
+        # Apply: only set if not already set (caller env wins per level-2 > level-2a)
+        # We apply unconditionally here and the caller snapshot is restored in
+        # au_load_config step 4 to enforce caller-wins.
+        export "${_key}=${_val}"
+        # Track when profile sets AU_PATCH so the pin file can override it (design step 7)
+        [[ "${_key}" == "AU_PATCH" ]] && _au_patch_from_profile=true
+        log_debug "Profile: ${_key}=${_val}"
+    done < "/dev/fd/${_AU_REAL_FD}"
+
+    # Close the fd on normal exit
+    exec {_AU_REAL_FD}<&-
+
+    log_info "Profile loaded: ${_profile_file}"
+}
+
+# ------------------------------------------------------------------------------
+# Function: au_validate_profile
+# Purpose.: Validate AU_PATCH keywords against target version and platform.
+#           Called after the full configuration is resolved.
+# Args....: None (reads AU_PATCH, AU_TARGET_VERSION, AU_PLATFORM from env)
+# Returns.: 0 if valid; exits 1 with a named error on violation.
+# Rules...:
+#   - RECOMMENDED + RU:x.y together: fatal (PCB_RECOMMENDED_VERSION_MISMATCH)
+#   - CSPU on LINUX.X64 for 19c or 23ai: fatal (VCP_CSPU_UNSUPPORTED_ON_LINUX)
+#   - CSPU valid for 21c on all platforms
+#   - MRP/DPBP/CSPU with version number: fatal (PATCH_FORMAT_FAIL)
+#   - On 21c: MRP, OJVM, DPBP not supported (VCP_MRP_UNSUPPORTED_ON_21)
+#   - OJVM:x.y must match RU:x.y (VCP_INVALID_RU_OJVM_MISMATCH)
+# ------------------------------------------------------------------------------
+au_validate_profile() {
+    local _patch="${AU_PATCH:-}"
+    local _ver="${AU_TARGET_VERSION:-19}"
+    local _plat="${AU_PLATFORM:-LINUX.X64}"
+    local _fail=false
+
+    [[ -z "${_patch}" ]] && return 0  # no patch to validate
+
+    # Split into tokens
+    local -a _tokens=()
+    local _saved_IFS="${IFS}"
+    IFS=',' read -ra _tokens <<< "${_patch}"
+    IFS="${_saved_IFS}"
+
+    local _has_recommended=false _has_ru=false _ru_ver="" _ojvm_ver="" _has_cspu=false
+    local _has_mrp=false _has_dpbp=false _has_ojvm=false
+    local _token
+
+    for _token in "${_tokens[@]}"; do
+        _token="${_token#"${_token%%[![:space:]]*}"}"
+        _token="${_token%"${_token##*[![:space:]]}"}"
+        case "${_token}" in
+            RECOMMENDED|RECOMMENDED:*)
+                _has_recommended=true
+                ;;
+            RU)
+                _has_ru=true
+                ;;
+            RU:*)
+                _has_ru=true; _ru_ver="${_token#RU:}"
+                ;;
+            OJVM:*)
+                _has_ojvm=true; _ojvm_ver="${_token#OJVM:}"
+                ;;
+            OJVM)
+                _has_ojvm=true
+                ;;
+            MRP)
+                _has_mrp=true
+                ;;
+            MRP:*)
+                log_error "AU_PATCH: MRP must not have a version number (PATCH_FORMAT_FAIL): ${_token}"
+                _fail=true
+                ;;
+            DPBP)
+                _has_dpbp=true
+                ;;
+            DPBP:*)
+                log_error "AU_PATCH: DPBP must not have a version number (PATCH_FORMAT_FAIL): ${_token}"
+                _fail=true
+                ;;
+            CSPU)
+                _has_cspu=true
+                ;;
+            CSPU:*)
+                log_error "AU_PATCH: CSPU must not have a version number (PATCH_FORMAT_FAIL): ${_token}"
+                _fail=true
+                ;;
+            [0-9]*)
+                # Plain patch number: accepted
+                ;;
+            OPATCH|AU|TOOLS|GOLDIMAGE:*)
+                # Valid keywords
+                ;;
+            *)
+                log_warn "AU_PATCH: unknown keyword '${_token}' (may be rejected by AutoUpgrade)"
+                ;;
+        esac
+    done
+
+    # RECOMMENDED + RU:x.y together
+    if [[ "${_has_recommended}" == true && "${_has_ru}" == true ]]; then
+        log_error "AU_PATCH: RECOMMENDED and RU:x.y cannot be combined (PCB_RECOMMENDED_VERSION_MISMATCH)"
+        _fail=true
+    fi
+
+    # CSPU platform check
+    local _major_ver="${_ver%%.*}"
+    if [[ "${_has_cspu}" == true ]]; then
+        local _plat_up="${_plat^^}"
+        # CSPU is fatal on Linux for 19c and 23ai
+        if [[ "${_plat_up}" == "LINUX.X64" || "${_plat_up}" == "LINUX.ARM" ]]; then
+            if [[ "${_major_ver}" == "19" || "${_major_ver}" == "23" ]]; then
+                log_error "AU_PATCH: CSPU is not supported on Linux for Oracle Database ${_major_ver}c (VCP_CSPU_UNSUPPORTED_ON_LINUX)"
+                log_error "         Use MRP instead for Linux patching."
+                _fail=true
+            fi
+        fi
+    fi
+
+    # 21c restrictions: no MRP, OJVM, DPBP
+    if [[ "${_major_ver}" == "21" ]]; then
+        if [[ "${_has_mrp}" == true ]]; then
+            log_error "AU_PATCH: MRP is not supported on 21c (VCP_MRP_UNSUPPORTED_ON_21)"
+            _fail=true
+        fi
+        if [[ "${_has_ojvm}" == true ]]; then
+            log_error "AU_PATCH: OJVM is not supported on 21c (VCP_INVALID_PATCH_APPLY)"
+            _fail=true
+        fi
+        if [[ "${_has_dpbp}" == true ]]; then
+            log_error "AU_PATCH: DPBP is not supported on 21c (VCP_INVALID_PATCH_APPLY)"
+            _fail=true
+        fi
+    fi
+
+    # OJVM:x.y must match RU:x.y
+    if [[ -n "${_ojvm_ver}" && -n "${_ru_ver}" && "${_ojvm_ver}" != "${_ru_ver}" ]]; then
+        log_error "AU_PATCH: OJVM:${_ojvm_ver} does not match RU:${_ru_ver} (VCP_INVALID_RU_OJVM_MISMATCH)"
+        _fail=true
+    fi
+
+    [[ "${_fail}" == false ]] || exit 1
+}
+
+# =============================================================================
+# WP15: Edition and OS groups
+# =============================================================================
+
+# Default group names (Oracle Database Preinstallation RPM names)
+_AU_DEFAULT_GROUP_OSDBA="dba"
+_AU_DEFAULT_GROUP_OSOPER="oper"
+_AU_DEFAULT_GROUP_OSBACKUPDBA="backupdba"
+_AU_DEFAULT_GROUP_OSDGDBA="dgdba"
+_AU_DEFAULT_GROUP_OSKMDBA="kmdba"
+_AU_DEFAULT_GROUP_OSRACDBA="racdba"
+
+# SS_* field names in config.c -> AU_GROUP_* mapping
+_AU_GROUP_VARS=(AU_GROUP_OSDBA AU_GROUP_OSOPER AU_GROUP_OSBACKUPDBA AU_GROUP_OSDGDBA AU_GROUP_OSKMDBA AU_GROUP_OSRACDBA)
+
+# ------------------------------------------------------------------------------
+# Function: au_derive_groups_from_config_c
+# Purpose.: Read SS_* group fields from an Oracle config.c file and set the
+#           corresponding AU_GROUP_* variables (only if unset).
+# Args....: $1 - path to config.c (or a file containing SS_* lines)
+# Returns.: 0; exports AU_GROUP_* variables; reports WARN on missing fields.
+# Notes...: Only unset AU_GROUP_* are filled (caller environment wins).
+#           Reads lines of the form: SS_DBA_GRP=dba
+# ------------------------------------------------------------------------------
+au_derive_groups_from_config_c() {
+    local _config_c="$1"
+    [[ -f "${_config_c}" ]] || { log_warn "config.c not found: ${_config_c}"; return 0; }
+    if ! declare -F au_home_read_groups >/dev/null; then
+        log_warn "Groups: lib/au_home.sh not loaded; AU_GROUP_* not derived from ${_config_c}"
+        return 0
+    fi
+
+    # Single parser for the real format (#define SS_DBA_GRP "dba") lives in
+    # au_home.sh; map its home_settings key names to the AU_GROUP_* variables
+    local _kv _key _val _var _ngroups=0
+    while IFS= read -r _kv; do
+        _key="${_kv%%=*}"
+        _val="${_kv#*=}"
+        case "${_key}" in
+            osdba_group) _var="AU_GROUP_OSDBA" ;;
+            osoper_group) _var="AU_GROUP_OSOPER" ;;
+            osbackupdba_group) _var="AU_GROUP_OSBACKUPDBA" ;;
+            osdgdba_group) _var="AU_GROUP_OSDGDBA" ;;
+            oskmdba_group) _var="AU_GROUP_OSKMDBA" ;;
+            osracdba_group) _var="AU_GROUP_OSRACDBA" ;;
+            *) continue ;;
+        esac
+        _ngroups=$((_ngroups + 1))
+        # Validate group name from config.c before use
+        _au_validate_group_name "${_val}" "${_var}"
+        # A value set by the caller or a config file wins over the source home
+        [[ -n "${!_var:-}" ]] && continue
+        export "${_var}=${_val}"
+        log_info "Groups: ${_var}=${_val} (from ${_config_c})"
+    done < <(au_home_read_groups "${_config_c}" 2>/dev/null || true)
+
+    if [[ "${_ngroups}" -eq 0 ]]; then
+        log_warn "Groups: no SS_*_GRP defines found in ${_config_c}; AU_GROUP_* not derived"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Function: au_set_edition_defaults
+# Purpose.: Apply AU_EDITION default logic based on AU_SOURCE_HOME presence.
+#           - AU_SOURCE_HOME set, AU_EDITION unset: leave empty (AU derives)
+#           - AU_SOURCE_HOME unset, AU_EDITION unset: default to EE
+#           - AU_EDITION set: validate (EE|SE2)
+# Args....: None (reads AU_EDITION, AU_SOURCE_HOME from env)
+# Returns.: 0; exports AU_EDITION
+# ------------------------------------------------------------------------------
+au_set_edition_defaults() {
+    # Validate if already set
+    if [[ -n "${AU_EDITION:-}" ]]; then
+        [[ "${AU_EDITION}" =~ ^(EE|SE2)$ ]] \
+            || die "AU_EDITION: invalid value '${AU_EDITION}' (must be EE or SE2)"
+        log_debug "Edition: using caller value: ${AU_EDITION}"
+        return 0
+    fi
+
+    if [[ -n "${AU_SOURCE_HOME:-}" ]]; then
+        # Leave AU_EDITION empty; AutoUpgrade derives edition from source home
+        log_debug "Edition: unset + AU_SOURCE_HOME set; AutoUpgrade will derive edition"
+    else
+        # No source home: must provide edition; default EE
+        AU_EDITION="EE"
+        export AU_EDITION
+        log_debug "Edition: no source home; defaulting to EE"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Function: au_set_group_defaults
+# Purpose.: Apply default OS group names when AU_SOURCE_HOME is not set.
+#           When AU_SOURCE_HOME is set, unset AU_GROUP_* lines are dropped in
+#           the template and AutoUpgrade derives groups from config.c natively.
+#           When AU_SOURCE_HOME is not set, all six groups must be explicit.
+# Args....: None (reads AU_SOURCE_HOME, AU_GROUP_* from env)
+# Returns.: 0; exports AU_GROUP_* if AU_SOURCE_HOME is not set
+# Notes...: Only applies to unset variables; caller env wins.
+# ------------------------------------------------------------------------------
+au_set_group_defaults() {
+    if [[ -n "${AU_SOURCE_HOME:-}" ]]; then
+        # With source home: leave unset; template lines are dropped by au_render_cfg
+        log_debug "Groups: AU_SOURCE_HOME set; unset AU_GROUP_* will be dropped (AutoUpgrade derives)"
+        return 0
+    fi
+
+    # Without source home: apply defaults for unset variables
+    local -a _defaults=(
+        "${_AU_DEFAULT_GROUP_OSDBA}"
+        "${_AU_DEFAULT_GROUP_OSOPER}"
+        "${_AU_DEFAULT_GROUP_OSBACKUPDBA}"
+        "${_AU_DEFAULT_GROUP_OSDGDBA}"
+        "${_AU_DEFAULT_GROUP_OSKMDBA}"
+        "${_AU_DEFAULT_GROUP_OSRACDBA}"
+    )
+    local _i _var _def
+    for _i in "${!_AU_GROUP_VARS[@]}"; do
+        _var="${_AU_GROUP_VARS[_i]}"
+        _def="${_defaults[_i]}"
+        if [[ -z "${!_var:-}" ]]; then
+            export "${_var}=${_def}"
+            log_debug "Groups: ${_var}=${_def} (preinstall RPM default)"
+        else
+            log_debug "Groups: ${_var}=${!_var} (caller value)"
+        fi
+    done
+}
+
+# ------------------------------------------------------------------------------
+# Function: au_check_group_membership
+# Purpose.: Verify the current user is a member of every configured OS group.
+#           Reports ERROR for each group the user is not a member of.
+#           AutoUpgrade performs the same check (IS_*_GROUP_FAIL); the wrapper
+#           checks early to give a clearer error message.
+# Args....: None (reads AU_GROUP_* from env)
+# Returns.: 0 if all groups OK or all groups empty; exits 1 listing missing ones
+# Notes...: Skips empty group variables (e.g. when AU_SOURCE_HOME is set and
+#           groups are left unset for AutoUpgrade to derive).
+# ------------------------------------------------------------------------------
+au_check_group_membership() {
+    local _user_groups=""
+    _user_groups=$(id -Gn 2>/dev/null || true)
+    if [[ -z "${_user_groups}" ]]; then
+        log_warn "Cannot determine group membership (id -Gn failed); skipping group check"
+        return 0
+    fi
+
+    local _fail=false _var _grp
+    for _var in "${_AU_GROUP_VARS[@]}"; do
+        _grp="${!_var:-}"
+        [[ -z "${_grp}" ]] && continue
+
+        local _member_found=false _g
+        for _g in ${_user_groups}; do
+            [[ "${_g}" == "${_grp}" ]] && _member_found=true && break
+        done
+
+        if [[ "${_member_found}" == false ]]; then
+            log_error "Group membership check: user '$(id -un)' is not a member of group '${_grp}' (required by ${_var})"
+            _fail=true
+        else
+            log_debug "Group membership: OK - user is member of ${_grp} (${_var})"
+        fi
+    done
+
+    if [[ "${_fail}" == true ]]; then
+        log_error "Add the current user to the required groups and retry."
+        exit 1
+    fi
 }

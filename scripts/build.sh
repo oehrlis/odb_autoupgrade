@@ -194,14 +194,32 @@ fi
 
 mkdir -p "$DIST_DIR"
 
-tar -czf "$TARBALL" -C "$SOURCE_DIR" "${FILES[@]}"
+# Stage a copy with normalized permissions: the tarball must not inherit the
+# umask of the build host (umask 002 gives group-writable etc/ and profiles,
+# which the env file and profile checks refuse after extraction)
+STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/au_build_XXXXXX")"
+trap '[[ "$CLEANUP_CHECKSUM" == true ]] && rm -f "${SOURCE_DIR}/${EXT_CHECKSUM_FILE}"; rm -rf "${STAGE_DIR}"' EXIT
+(cd "$SOURCE_DIR" && tar -cf - "${FILES[@]}") | (cd "$STAGE_DIR" && tar -xf -)
+find "$STAGE_DIR" -type d -exec chmod 755 {} +
+find "$STAGE_DIR" -type f -exec chmod 644 {} +
+find "$STAGE_DIR" -type f \( -path "${STAGE_DIR}/bin/*.sh" -o -path "${STAGE_DIR}/scripts/*.sh" \) -exec chmod 755 {} +
+
+# Neutral owner in the archive instead of the build user
+if [[ "$(tar --version 2>/dev/null)" == *"GNU tar"* ]]; then
+    TAR_OWNER_OPTS=(--owner=0 --group=0 --numeric-owner)
+else
+    TAR_OWNER_OPTS=(--uid 0 --gid 0 --uname root --gname root)
+fi
+tar "${TAR_OWNER_OPTS[@]}" -czf "$TARBALL" -C "$STAGE_DIR" "${FILES[@]}"
 echo "Created tarball: $TARBALL"
 
 if [[ "$CHECKSUM" == true ]]; then
+    # Record only the file name so `sha256sum -c` works wherever the files are copied
+    tarball_name="$(basename "$TARBALL")"
     if command_exists sha256sum; then
-        sha256sum "$TARBALL" > "$CHECKSUM_FILE"
+        (cd "$(dirname "$TARBALL")" && sha256sum "$tarball_name") > "$CHECKSUM_FILE"
     else
-        shasum -a 256 "$TARBALL" > "$CHECKSUM_FILE"
+        (cd "$(dirname "$TARBALL")" && shasum -a 256 "$tarball_name") > "$CHECKSUM_FILE"
     fi
     echo "Created checksum: $CHECKSUM_FILE"
 fi

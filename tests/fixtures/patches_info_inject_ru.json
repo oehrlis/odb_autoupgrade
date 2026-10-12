@@ -1,0 +1,18 @@
+{
+  "patchFolder": "/opt/oracle/patches/test",
+  "generatedAt": "2024-10-15T08:00:00Z",
+  "patches": [
+    {
+      "description": "Release Update 19.28",
+      "patchId": 37056207,
+      "releaseUpdate": "19.28,12345678,OJVM:19.1",
+      "files": [
+        {
+          "name": "p37056207_190000_Linux-x86-64.zip",
+          "SHA-256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "size": 100
+        }
+      ]
+    }
+  ]
+}

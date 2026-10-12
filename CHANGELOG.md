@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 - 2026-10-12
 
 ### Added
 
@@ -12,12 +12,30 @@
 - Configuration precedence: caller > `AUTOUPGRADE_ENV_FILE` > `${ORADBA_CONFIG_DIR}/autoupgrade.env` >
   `etc/autoupgrade.env` > pin file > defaults; every loaded or refused file is named
 - `au_run.sh` prints the `VDGI_*` / `GOLD_IMAGE` lines of the patching log after a download
+- Patch profiles (`--profile`, `etc/profiles/`): `recommended`, `19.32`, a CPU-test example with a pinned MRP
+  number and a 21c CSPU example; search path `AU_PROFILE_DIR` > OraDBA site directory > `etc/profiles`
+- `au_patch_pin.sh` (pin `AU_PATCH` from `patches_info.json`, `--resolve-mrp`) and `au_patch_verify.sh` (size and
+  SHA-256 of every listed file); `au_run.sh` pins automatically after a download (`--no-pin`)
+- `AU_EDITION` (EE default without source home, SE2) and `AU_GROUP_*` (preinstall names by default, derived from
+  the source home `config.c`); example site group profile `etc/groups/os-fixed-gid.env`
+- `au_log_cleanup.sh` - lists by default, deletes with `--delete --yes`, never touches the files AutoUpgrade reuses
+- `au_gen_config.sh` (per-host create_home configuration, home naming `product/<RU>` with `_2`/`_3`),
+  `au_home_verify.sh` (patches, binary options, groups, edition), `au_goldimage.sh` (create, verify and install a
+  self-built gold image; `root.sh` is printed, never run)
+- `au_keystore.sh --check`, `--resave`, `--backup` and `etc/au_keystore.cfg`; `au_update_jar.sh` version
+  compare with downgrade guard, `--from`, `--sha256`, `--keep`, re-save warning; `AU_JAR_DIR`
+- Documentation: configuration, patch profiles, Oracle homes and gold images, keystore and JAR, log cleanup,
+  upgrade to 0.6.0
 - `doc/design.md` - Phase 2 design: inventory legacy vs target, target architecture, configuration precedence,
   gold image paths, patch profiles, one template `au_patch.cfg` for all modes, edition and OS groups,
   cross-repository ownership, field findings mapping, work packages and decisions
 
 ### Changed
 
+- Legacy configurations removed: `download_RU19.*.cfg`, `download_patch.cfg`, `download_test.cfg`,
+  `sample_*.cfg`, `test.cfg`, and `bin/extension_tool.sh`
+- The release tarball has normalized permissions (directories 755, files 644, scripts 755) and the `.sha256`
+  file names only the tarball, so `sha256sum -c` works on the target host
 - bash 4.2 or later is required (Oracle Linux 8/9; Homebrew bash on macOS)
 - The 0.5.0 templates `au_download.cfg`, `au_create_home.cfg`, `au_deploy.cfg` print a deprecation warning
 - Env files are refused when their directory is group or world writable - run `chmod go-w` on `etc/` and the
@@ -25,11 +43,23 @@
 
 ### Security
 
+- `patches_info.json` is treated as untrusted: verification fails on parse errors, missing hashes and unsafe
+  file names; pinned values are validated (RU version, patch numbers, keyword allow-list)
+- Profiles get the same file checks as env files and are parsed, never sourced; profile values and group names
+  are validated wherever they enter a configuration or installer response file
+- Log cleanup refuses directories that contain Oracle homes or inventories or are ancestors of ORACLE_BASE,
+  ORACLE_HOME, the download folder or the keystore
+- Binaries from a given Oracle home run only when owned by the user or root and not writable by others; gold
+  image zips are checked for path traversal before extraction
+- Keystore passwords never reach child processes; manifest versions are validated before comparison
 - Env files are opened once and checked on the open file (owner by numeric uid, mode, parent directories
   including every symlink hop), then sourced from that file descriptor
 - Higher configuration levels are chosen from the caller environment only, never by a lower-level file
 - Readonly conflicts, template lines without `=`, duplicate `-mode` and missing `envsubst` abort with a message;
   renderer temp files are removed on every exit
+- Keystore backups refuse a backup root inside the keystore; `--workdir .` and `..` are resolved first
+- Version comparison covers every dotted part, so a downgrade in a fourth part is no longer seen as equal
+- Release tarball entries carry owner 0/0 instead of the build user
 
 ## 0.5.0 - 2026-10-08
 

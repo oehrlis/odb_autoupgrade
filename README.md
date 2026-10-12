@@ -1,124 +1,153 @@
-# OraDBA Autoupgrade (odb_autoupgrade)
+# odb_autoupgrade
 
-OraDBA extension for Oracle AutoUpgrade. Ships wrapper scripts, ready-to-use
-configs, and optional docs/patches/JAR layout. Can be installed as an OraDBA
-extension or used standalone; build only packages the extension payload
-(bin/etc/lib + metadata/docs), not the dev helpers.
+Oracle AutoUpgrade patching tooling for Oracle Database 19c, 21c and 23ai.
+Runs standalone or as an OraDBA extension; the same scripts and config work in both modes.
 
-## Quick Start (OraDBA Extension)
+## Quick Start - Standalone
 
-- Clone/copy this repo into `${ORADBA_LOCAL_BASE}`.
-- Build tarball + checksum: `./scripts/build.sh` (outputs to `dist/`).
-- Extract the tarball into `${ORADBA_LOCAL_BASE}`; auto-discovery loads
-  `odb_autoupgrade`.
-- Configure using `etc/` templates; scripts live in `bin/`.
+```bash
+# 1. Unpack anywhere, e.g. /u00/app/oracle/odb_autoupgrade
+tar xzf odb_autoupgrade-0.6.0.tar.gz
+cd odb_autoupgrade
 
-## Quick Start (Standalone)
+# 2. Update the AutoUpgrade JAR
+bin/au_update_jar.sh
 
-- Clone/copy this repo anywhere (e.g., `/u00/app/oracle/odb_autoupgrade`).
-- Download/update the AutoUpgrade JAR: `./bin/au_update_jar.sh`.
-- Run AutoUpgrade via wrapper:
-  `./bin/au_run.sh -config au_download.cfg -patch -mode download`.
-- Optional: add `bin/` to `PATH`.
+# 3. Configure site settings (proxy, truststore, paths)
+cp etc/autoupgrade.env.example etc/autoupgrade.env
+$EDITOR etc/autoupgrade.env
 
-## Structure (repo = extension)
+# 4. Download the recommended patch set (profile selects patch list)
+bin/au_run.sh --profile recommended -config etc/au_patch.cfg -patch -mode download
 
-```text
-.extension                  # Extension metadata (name/version/priority/description)
-README.md                   # This file
-CHANGELOG.md, VERSION, LICENSE
-bin/                        # Wrapper scripts (run/update autoupgrade, keystore)
-etc/                        # AutoUpgrade config examples
-lib/                        # Shared helpers
-doc/                        # Docs for the extension
-jar/                        # Place autoupgrade.jar here
-patches/                    # Store patch bundles/metadata
-scripts/                    # Dev tooling (build/rename)
-tests/                      # BATS tests for dev tooling
-.github/workflows/          # CI (lint/tests) and release
-dist/                       # Build outputs (ignored)
-log/                        # Logs (not packaged)
+# 5. Verify the download
+bin/au_patch_verify.sh patches/recommended
+
+# 6. Create a new Oracle Home from the downloaded set
+AU_TARGET_HOME=/u00/app/oracle/product/19.32.0.0 \
+  bin/au_run.sh --profile recommended -config etc/au_patch.cfg -patch -mode create_home
 ```
 
-## Packaging
+## Quick Start - OraDBA Extension
 
-- `scripts/build.sh` reads `VERSION` and `.extension` to create
-  `dist/<name>-<version>.tar.gz` plus `<tarball>.sha256`.
-- Payload includes: `.extension`, `.checksumignore`,
-  README/CHANGELOG/LICENSE/VERSION, bin/etc/lib/doc/jar/patches. Dev assets
-  (`scripts/`, `tests/`, `.github/`, `dist/`, `.git*`) are excluded.
-- Override output dir with `--dist`. Override version with `--version`.
-- Build also generates `.extension.checksum` file for integrity verification.
+```bash
+# Install into the OraDBA local base
+cd "${ORADBA_LOCAL_BASE}"
+tar xzf odb_autoupgrade-0.6.0.tar.gz
 
-## Integrity Checking
+# OraDBA auto-discovery loads the extension.
+# Optional: enable env/alias hooks in .extension and set
+#   ORADBA_EXTENSIONS_SOURCE_ETC=true
 
-The `.checksumignore` file specifies patterns for files excluded from integrity checks:
-
-- **Default exclusions**: `.extension`, `.checksumignore`, and `log/` directory
-- **Glob patterns supported**: `*.log`, `keystore/`, `secrets/*.key`, etc.
-- **One pattern per line**: Lines starting with `#` are comments
-- **Common use cases**: credentials, caches, temporary files, user-specific configs
-
-Example `.checksumignore`:
-
-```text
-# Exclude log directory (already default)
-log/
-
-# Credentials and secrets
-keystore/
-*.key
-*.pem
-
-# Cache and temporary files
-cache/
-*.tmp
+# Download with a profile using a pinned release
+bin/au_run.sh --profile 19.32 -config etc/au_patch.cfg -patch -mode download
 ```
 
-When OraDBA verifies extension integrity, files matching these patterns are skipped.
+## Script Overview
 
-## Extension Hooks (env/aliases)
+<!-- markdownlint-disable MD013 MD060 -->
+| Script | Purpose | Replaces (until 1.0) |
+| --- | --- | --- |
+| `bin/au_run.sh` | AutoUpgrade wrapper: Java, proxy, truststore, config render, pin write, post-run log scan | `bin/run_autoupgrade.sh` (shim) |
+| `bin/au_update_jar.sh` | Download or install autoupgrade.jar; version compare, backup, checksum | `bin/update_autoupgrade.sh` (shim) |
+| `bin/au_keystore.sh` | MOS keystore: create, check, re-save, backup | `bin/create_mos_keystore.sh` (shim) |
+| `bin/au_check_connectivity.sh` | Pre-flight: endpoints, TLS issuer, keystore, JAR version | - |
+| `bin/au_patch_pin.sh` | Write AU_PATCH pin file from patches_info.json after download | - |
+| `bin/au_patch_verify.sh` | Verify a download folder against patches_info.json (size, SHA-256) | - |
+| `bin/au_gen_config.sh` | Generate a per-host create_home / deploy config from au_patch.cfg | - |
+| `bin/au_home_verify.sh` | Compare source and target Oracle Home (patches, binary options, groups) | - |
+| `bin/au_goldimage.sh` | Self-built gold image: create, verify, manual install fallback | - |
+| `bin/au_log_cleanup.sh` | Safe cleanup of AutoUpgrade global_log_dir | - |
+| `bin/run_autoupgrade.sh` | Deprecation shim - use au_run.sh | removed in 1.0 |
+| `bin/update_autoupgrade.sh` | Deprecation shim - use au_update_jar.sh | removed in 1.0 |
+| `bin/create_mos_keystore.sh` | Deprecation shim - use au_keystore.sh | removed in 1.0 |
+<!-- markdownlint-restore -->
 
-This extension supports optional OraDBA etc hook files:
+## Feature Matrix
 
-- `etc/env.sh`
-- `etc/aliases.sh`
+<!-- markdownlint-disable MD013 MD060 -->
+| Function | Standalone | With OraDBA | Manual step (standalone) |
+| --- | --- | --- | --- |
+| Wrapper, profiles, templates, download, create_home, deploy | yes | yes | - |
+| Pin, verify, keystore, JAR update, log cleanup | yes | yes | - |
+| Connectivity check, gold image create and install | yes | yes | - |
+| Site config directory `${ORADBA_CONFIG_DIR}` | no | yes | Use `AUTOUPGRADE_ENV_FILE` or `etc/autoupgrade.env` |
+| Profile search path `${ORADBA_CONFIG_DIR}/autoupgrade/profiles` | no | yes | Set `AU_PROFILE_DIR` |
+| Register new home in `oradba_homes.conf` | no | yes | Printed as manual step by au_run.sh |
+| Switch environment to the new home | no | yes | Printed as manual step by au_run.sh |
+| Aliases (`au`), extension hooks, integrity check | no | yes | - |
+| Logging | own log files | own log files | - |
+<!-- markdownlint-restore -->
 
-Current default in `.extension`:
+## Configuration Precedence
 
-- `load_env: false`
-- `load_aliases: false`
+Highest priority wins:
 
-To enable hook sourcing, set both:
+1. CLI options passed to the script
+2. Caller environment
+3. Profile selected with `--profile` (`AU_PATCH`, `AU_TARGET_VERSION`, etc.)
+4. Explicit env file `AUTOUPGRADE_ENV_FILE`
+5. OraDBA site config `${ORADBA_CONFIG_DIR}/autoupgrade.env` (OraDBA mode only)
+6. Extension env file `etc/autoupgrade.env`
+7. Pin file `${AU_DOWNLOAD_FOLDER}/au_patch.env` (only `AU_PATCH`)
+8. Built-in defaults
 
-1. Global switch `ORADBA_EXTENSIONS_SOURCE_ETC=true`
-2. Set `load_env: true` and/or `load_aliases: true` in `.extension`
+See [doc/configuration.md](doc/configuration.md) for the full reference.
 
-## Rename Helper
+## Profiles Quick Example
 
-- `scripts/rename-extension.sh --name <newname> [--description "..."] [--workdir <path>]`
-- Updates `.extension`, README, the sample config filename in `etc/`, and
-  references to the old name (including release notes).
-- Run immediately after cloning to avoid manual edits.
+A profile selects a named patch set for download, create_home and deploy in one command:
 
-## CI and Releases
+```bash
+# Download pinned release RU 19.32 (zips, no gold image)
+bin/au_run.sh --profile 19.32 -config etc/au_patch.cfg -patch -mode download
 
-- CI: shellcheck for scripts, markdownlint for docs, BATS tests for helper scripts.
-- Release: on tags `v*.*.*` (or manual dispatch), runs lint/tests, builds
-  tarball + checksum, and publishes them as GitHub release assets.
+# Download with Oracle gold image for OL 9 builds
+AU_GOLD_IMAGE=YES \
+  bin/au_run.sh --profile recommended -config etc/au_patch.cfg -patch -mode download
 
-## Using AutoUpgrade
+# Create Oracle Home from the downloaded folder
+AU_TARGET_HOME=/u00/app/oracle/product/19.32.0.0 \
+  bin/au_run.sh --profile 19.32 -config etc/au_patch.cfg -patch -mode create_home
+```
 
-- Download or update the JAR: `./bin/au_update_jar.sh` (stores in `jar/`).
-- Run AutoUpgrade with wrapper:
-  `./bin/au_run.sh -config au_download.cfg -patch -mode download`
-  - Wrapper resolves configs relative to CWD or `etc/`, expands env vars with `envsubst`, and sets `AUTOUPGRADE_BASE`.
-- MOS keystore: create with `./bin/au_keystore.sh` and store credentials securely.
+Shipped profiles in `etc/profiles/`:
 
-## Renamed Scripts (v0.5.0)
+- `recommended` - current Oracle recommendation, pinned to `RECOMMENDED:<x.y>` after download
+- `19.32` - RU 19.32 with OPatch, OJVM, DPBP, MRP
+- `cputest-example` - reproducible CPU-test with pinned MRP (replace placeholder before use)
+- `21c-cspu` - 21c with CSPU (valid on Linux for 21c; replace RU version before use)
 
-The following scripts were renamed. Old names remain as deprecated shims
-(exec-delegation only) and will be removed in version 1.0.
+See [doc/patch-profiles.md](doc/patch-profiles.md).
+
+## Documentation
+
+- [Configuration](doc/configuration.md) - env files, all AU_* variables, au_patch.cfg keys
+- [Patch Profiles](doc/patch-profiles.md) - profile format, shipped profiles, pinning, verification
+- [Oracle Home](doc/oracle-home.md) - create_home, edition, OS groups, gold image, naming
+- [Keystore and JAR](doc/keystore-and-jar.md) - MOS keystore, auto-login, JAR update flow
+- [Log Cleanup](doc/log-cleanup.md) - safe cleanup of AutoUpgrade log directory
+- [Proxy and Truststore](doc/proxy-and-truststore.md) - TLS inspection, proxy config, endpoints
+- [Upgrade Notes 0.6.0](doc/upgrade-0.6.0.md) - migration from 0.5.0 and legacy layout
+- [All docs](doc/index.md)
+
+## Repository Layout
+
+```text
+.extension  .checksumignore  VERSION  CHANGELOG.md  README.md  LICENSE  Makefile
+bin/         wrapper and tool scripts (au_*.sh) plus deprecation shims
+lib/         common.sh (generic), au_lib.sh (loader), au_env.sh, au_net.sh, au_tools.sh
+etc/         au_patch.cfg, au_keystore.cfg, autoupgrade.env.example, profiles/, groups/
+jar/         autoupgrade.jar goes here (not committed)
+patches/     downloaded patch zips and metadata (not committed)
+keystore/    MOS wallet (not committed)
+logs/        AutoUpgrade runtime logs (not committed)
+doc/         this documentation
+tests/       BATS tests
+scripts/     build.sh, rename-extension.sh
+```
+
+## Renamed Scripts (since 0.5.0)
 
 | Old name | New name |
 | --- | --- |
@@ -126,7 +155,10 @@ The following scripts were renamed. Old names remain as deprecated shims
 | `bin/update_autoupgrade.sh` | `bin/au_update_jar.sh` |
 | `bin/create_mos_keystore.sh` | `bin/au_keystore.sh` |
 
-## Installation Options
+The old names remain as deprecation shims and are removed in 1.0.
+The 0.5.0 config templates `au_download.cfg`, `au_create_home.cfg` and `au_deploy.cfg`
+are deprecated aliases for `au_patch.cfg` and are also removed in 1.0.
 
-- **OraDBA extension**: place in `${ORADBA_LOCAL_BASE}` and extract tarball; auto-discovery loads it.
-- **Standalone**: clone/unpack anywhere, update JAR, and run via `bin/` scripts.
+## License
+
+Apache License 2.0 - see [LICENSE](LICENSE).

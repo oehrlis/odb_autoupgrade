@@ -1,0 +1,19 @@
+{
+  "patchFolder": "/patches/recommended",
+  "generatedAt": "2024-10-15T08:00:00Z",
+  "patches": [
+    {
+      "description": "DATABASE RELEASE UPDATE 19.32.0.0.0",
+      "platform": "LINUX.X64",
+      "releaseUpdate": "19.32.0.0.0",
+      "patchId": 37260974,
+      "files": [
+        {
+          "name": "p37260974_190000_Linux-x86-64.zip",
+          "SHA-256": "aabbcc0011223344556677889900aabb1122334455667788990011aabbcc0011",
+          "size": 1234567890
+        }
+      ]
+    }
+  ]
+}

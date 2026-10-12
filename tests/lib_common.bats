@@ -127,3 +127,58 @@ teardown() {
     run bash -c "grep '_DATASAFE_CONF_FILES' '${LIB}'"
     [ "${status}" -ne 0 ] || [ -z "${output}" ]
 }
+
+# ---------------------------------------------------------------------------
+# MUST 2 regression: setup_error_handling EXIT trap calls _au_purge_tmpfiles
+# ---------------------------------------------------------------------------
+
+@test "common.sh: setup_error_handling EXIT trap includes _au_purge_tmpfiles" {
+    # The fix: setup_error_handling must call _au_purge_tmpfiles (if defined)
+    # in addition to cleanup(), so the library temp list is never orphaned.
+    run bash -c "
+        set -euo pipefail
+        source '${LIB}'
+
+        # Simulate au_env.sh: define _au_purge_tmpfiles and a tmpfile list
+        _AU_TMPFILES=()
+        _PURGE_CALLED=false
+        _au_purge_tmpfiles() { _PURGE_CALLED=true; rm -f \"\${_AU_TMPFILES[@]}\"; }
+
+        # setup_error_handling overwrites the EXIT trap; it must still call purge
+        CLEANUP_ON_EXIT=true
+        setup_error_handling
+
+        # Create a fake temp file and register it
+        _tmp_f=\"\${BATS_TMPDIR:-/tmp}/au_test_common_\$\$.tmp\"
+        touch \"\${_tmp_f}\"
+        _AU_TMPFILES+=(\"\${_tmp_f}\")
+
+        # Trigger EXIT by exiting normally
+        exit 0
+    "
+    [ "${status}" -eq 0 ]
+    # The temp file must have been removed by _au_purge_tmpfiles
+    local _leftover
+    _leftover=$(find "${BATS_TMPDIR}" -maxdepth 1 -name 'au_test_common_*.tmp' 2>/dev/null || true)
+    [ -z "${_leftover}" ]
+}
+
+@test "common.sh: setup_error_handling cleanup fn still called alongside purge" {
+    # setup_error_handling must call both _au_purge_tmpfiles AND cleanup().
+    local marker="${WORK_DIR}/cleanup_marker"
+    run bash -c "
+        set -euo pipefail
+        source '${LIB}'
+
+        _AU_TMPFILES=()
+        _au_purge_tmpfiles() { :; }
+
+        cleanup() { touch '${marker}'; }
+
+        CLEANUP_ON_EXIT=true
+        setup_error_handling
+        exit 0
+    "
+    [ "${status}" -eq 0 ]
+    [ -f "${marker}" ]
+}

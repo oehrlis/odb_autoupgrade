@@ -38,6 +38,7 @@ log/
 
 # Credentials and secrets
 keystore/
+keystore_backup/
 etc/autoupgrade.env
 etc/*.env
 *.p12

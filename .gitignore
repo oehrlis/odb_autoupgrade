@@ -21,6 +21,7 @@ tasks/
 # AutoUpgrade runtime data - never commit (credentials, binaries, logs)
 etc/autoupgrade.env
 keystore/
+keystore_backup/
 logs/
 jar/*.jar
 patches/*

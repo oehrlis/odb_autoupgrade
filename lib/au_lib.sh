@@ -62,4 +62,16 @@ fi
 # shellcheck source=lib/au_tools.sh
 . "${_AU_LIB_DIR}/au_tools.sh"
 
+# Load Oracle Home inspection (au_home_read_groups, au_home_list_binopts,
+# au_home_target_name) and log cleanup helpers (au_logs_*)
+for _au_mod in au_home.sh au_logs.sh; do
+    if [[ ! -f "${_AU_LIB_DIR}/${_au_mod}" ]]; then
+        echo "ERROR: Cannot find ${_au_mod} in ${_AU_LIB_DIR}" >&2
+        exit 1
+    fi
+    # shellcheck source=/dev/null
+    . "${_AU_LIB_DIR}/${_au_mod}"
+done
+unset _au_mod
+
 unset _AU_LIB_DIR
