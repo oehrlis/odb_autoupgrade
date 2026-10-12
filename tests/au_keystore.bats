@@ -17,6 +17,12 @@ setup() {
     mkdir -p "${WORK_DIR}/bin" "${WORK_DIR}/keystore" "${WORK_DIR}/etc"
     mkdir -p "${WORK_DIR}/jar"
 
+    # Default expect stub so no test depends on the host (CI runners have no
+    # expect); tests that drive expect overwrite it. It fails loudly if called.
+    printf '#!/usr/bin/env bash\necho "expect stub called unexpectedly" >&2\nexit 99\n' > "${WORK_DIR}/bin/expect"
+    chmod +x "${WORK_DIR}/bin/expect"
+    export PATH="${WORK_DIR}/bin:${PATH}"
+
     # Ensure a placeholder jar exists for the repo (for integration context)
     _FAKE_JAR_CREATED=""
     if [[ ! -f "${REPO_ROOT}/jar/autoupgrade.jar" ]]; then
