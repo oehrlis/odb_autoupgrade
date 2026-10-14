@@ -679,3 +679,24 @@ CURLEOF2
     [[ "${output}" == *"fake=rejected"* ]]
     [[ "${output}" == *"digicert=ok"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# doc/network-endpoints.md and the built-in list stay in sync (Phase 4)
+# ---------------------------------------------------------------------------
+
+@test "au_check_connectivity: built-in endpoints match doc/network-endpoints.md" {
+    local doc="${REPO_ROOT}/doc/network-endpoints.md"
+    # hosts from the table: first column, backticked
+    local doc_hosts code_hosts
+    doc_hosts="$(grep -E '^\| `[a-z0-9.-]+` \|' "${doc}" | sed -E 's/^\| `([^`]+)`.*/\1/' | sort)"
+    code_hosts="$(grep -E '^    "[a-z0-9.-]+\|https://' "${REPO_ROOT}/bin/au_check_connectivity.sh" \
+        | sed -E 's/^    "([^|]+)\|.*/\1/' | sort)"
+    [ -n "${doc_hosts}" ]
+    [ "${doc_hosts}" = "${code_hosts}" ] || { diff <(echo "${doc_hosts}") <(echo "${code_hosts}"); return 1; }
+    [[ "${code_hosts}" == *"edelivery.oracle.com"* ]]
+}
+
+@test "au_check_connectivity: no jar class names as endpoint sources (Phase 4)" {
+    run grep -cE 'jar [0-9]+\.[0-9]+ [A-Z][A-Za-z]+' "${REPO_ROOT}/bin/au_check_connectivity.sh"
+    [ "${output}" = "0" ]
+}
