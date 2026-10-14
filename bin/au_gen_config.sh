@@ -5,7 +5,7 @@
 # Script.....: au_gen_config.sh
 # Author.....: Stefan Oehrli (oes) stefan.oehrli@oradba.ch
 # Date.......: 2026.10.09
-# Version....: v0.6.0
+# Version....: v0.6.1
 # Purpose....: Generate a per-host create_home config rendered from au_patch.cfg.
 #              With --source-home: AutoUpgrade derives groups/base/edition; the
 #              generator fills target home, SID, folders and reports what AU will
@@ -58,7 +58,7 @@ fi
 # =============================================================================
 
 : "${DRY_RUN:=false}"
-export SCRIPT_VERSION="v0.6.0"
+export SCRIPT_VERSION="v0.6.1"
 
 # Script-specific options
 OPT_RU=""

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.1 - 2026-10-14
 
 ### Added
 
@@ -17,20 +17,22 @@
 - Prerequisites name `gettext` (`envsubst`) and `expect`; minimal `oraclelinux:9` images lack `gettext` (#5)
 - `au_validate_profile` warned `unknown keyword 'JDK'` on every profile load: `JDK`, `OCW` and `GI` (also with
   version) are valid, the same set `au_patch_pin.sh` accepts
-- `doc/proxy-and-truststore.md` documented exit code 2 of `au_check_connectivity.sh` as "checks skipped"; it means
-  warnings only. Endpoint sources now cite the Oracle Upgrade Guide instead of jar internals
 - `au_patch_pin.sh --resolve-mrp` kept the `MRP` keyword silently when `patches_info.json` has no MRP entry (the
   case in every measured download); it now prints a WARN
+- `doc/installation.md` was still the generic extension template: it now names the repository
+  `oehrlis/odb_autoupgrade`, covers the OraDBA online and offline install (`sha256sum -c`), update, standalone
+  install, and explains the misleading "No releases found" message of `oradba_extension.sh`
+- The release tarball did not contain `doc/` although `.extension` declares `provides: doc: true`; it now ships
+  `doc/`, `jar/README.md` and `patches/README.md`
+- `doc/proxy-and-truststore.md` documented exit code 2 of `au_check_connectivity.sh` as "checks skipped"; it means
+  warnings only. Endpoint sources now cite the Oracle Upgrade Guide instead of jar internals
 
 ### Changed
 
 - `cputest-example` profile and the CPU-test workflow in `doc/patch-profiles.md`: the monthly patch is requested
   by keyword (`AU_PATCH=RU:19.32,OPATCH,OJVM:19.32,DPBP,JDK,MRP`, `AU_GOLD_IMAGE=YES`), the MOS patch number is a
   header record only - the convention of the `cpu-patch-tests` profiles. The `99999999` placeholder is gone
-
-- `doc/installation.md` was still the generic extension template: it now names the repository
-  `oehrlis/odb_autoupgrade`, covers the OraDBA online and offline install (`sha256sum -c`), update, standalone
-  install, and explains the misleading "No releases found" message of `oradba_extension.sh`
+- `au_run.sh --dry-run` output: the rendered config goes to stdout, the command line stays on stderr
 
 ## 0.6.0 - 2026-10-12
 

@@ -6,7 +6,7 @@
 # Author.....: Stefan Oehrli (oes) stefan.oehrli@oradba.ch
 # Editor.....: Stefan Oehrli
 # Date.......: 2026.10.09
-# Version....: v0.6.0
+# Version....: v0.6.1
 # Purpose....: Manage the AutoUpgrade MOS keystore: create, check, re-save, and
 #              back up the ewallet.p12 / cwallet.sso wallet pair.
 # Notes......: Operations:
@@ -52,7 +52,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 LIB_DIR="${SCRIPT_DIR}/../lib"
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 readonly SCRIPT_NAME
-: "${SCRIPT_VERSION:=0.6.0}"
+: "${SCRIPT_VERSION:=0.6.1}"
 
 SCRIPT_BASE="$(dirname "${SCRIPT_DIR}")"
 if [[ -n "${AUTOUPGRADE_BASE:-}" && "${AUTOUPGRADE_BASE}" != "${SCRIPT_BASE}" ]]; then

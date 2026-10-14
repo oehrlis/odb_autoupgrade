@@ -22,7 +22,7 @@ cannot be installed from - see [Troubleshooting](#troubleshooting).
 
 ```bash
 oradba_extension.sh add oehrlis/odb_autoupgrade           # latest release
-oradba_extension.sh add oehrlis/odb_autoupgrade@v0.6.0    # specific release
+oradba_extension.sh add oehrlis/odb_autoupgrade@v0.6.1    # specific release
 ```
 
 The installer reads the release through the GitHub API (`api.github.com`) and downloads the asset
@@ -46,7 +46,7 @@ Use this path on hosts without access to `api.github.com`, or when the API rate 
 both release assets on a host with access and copy them over:
 
 ```bash
-VERSION=0.6.0
+VERSION=0.6.1
 BASE_URL="https://github.com/oehrlis/odb_autoupgrade/releases/download/v${VERSION}"
 curl -fLO "${BASE_URL}/odb_autoupgrade-${VERSION}.tar.gz"
 curl -fLO "${BASE_URL}/odb_autoupgrade-${VERSION}.tar.gz.sha256"
@@ -67,8 +67,8 @@ oradba_extension.sh add "$PWD/odb_autoupgrade-${VERSION}.tar.gz" --update   # of
 ```
 
 The update creates a full backup `odb_autoupgrade_backup_<timestamp>` next to the extension, then replaces
-`bin/`, `lib/` and `etc/`. Files in `etc/` that differ from the release checksum and user-added `*.env` and
-`*.conf` files are kept. `keystore/`, `jar/` and `patches/` are not touched.
+`bin/`, `lib/` and `etc/` and copies the new `doc/` over the old one. Files in `etc/` that differ from the release
+checksum and user-added `*.env` and `*.conf` files are kept. `keystore/`, `jar/` and `patches/` are not touched.
 
 Read the release notes before an update; [Upgrade 0.6.0](upgrade-0.6.0.md) covers the migration from 0.5.0.
 
@@ -77,8 +77,8 @@ Read the release notes before an update; [Upgrade 0.6.0](upgrade-0.6.0.md) cover
 ```bash
 mkdir -p /u00/app/oracle/local
 cd /u00/app/oracle/local
-sha256sum -c odb_autoupgrade-0.6.0.tar.gz.sha256
-tar xzf odb_autoupgrade-0.6.0.tar.gz
+sha256sum -c odb_autoupgrade-0.6.1.tar.gz.sha256
+tar xzf odb_autoupgrade-0.6.1.tar.gz
 cd odb_autoupgrade
 cp etc/autoupgrade.env.example etc/autoupgrade.env
 chmod go-w etc etc/autoupgrade.env

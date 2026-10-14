@@ -5,7 +5,7 @@
 # Name.......: au_run.sh
 # Author.....: Stefan Oehrli (oes) stefan.oehrli@oradba.ch
 # Date.......: 2026.10.09
-# Version....: v0.6.0
+# Version....: v0.6.1
 # Purpose....: Wrapper script to run Oracle AutoUpgrade with proxy, truststore,
 #              config rendering, and env-file support.
 # Notes......: - AUTOUPGRADE_BASE derived from script location (never from env).

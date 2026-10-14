@@ -5,7 +5,7 @@
 # Module.....: au_net.sh
 # Author.....: Stefan Oehrli (oes) stefan.oehrli@oradba.ch
 # Date.......: 2026.10.09
-# Version....: v0.6.0
+# Version....: v0.6.1
 # Purpose....: Java resolution, proxy, truststore and curl wrapper for
 #              AutoUpgrade wrapper scripts. Functions moved from au_lib.sh .
 # License....: Apache License Version 2.0

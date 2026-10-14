@@ -6,7 +6,7 @@
 # Author.....: Stefan Oehrli (oes) stefan.oehrli@oradba.ch
 # Editor.....: Stefan Oehrli
 # Date.......: 2026.10.09
-# Version....: v0.6.0
+# Version....: v0.6.1
 # Purpose....: Pre-flight connectivity check for Oracle AutoUpgrade.
 #              Validates that all required Oracle endpoints are reachable
 #              through the configured proxy, TLS inspection is detected,

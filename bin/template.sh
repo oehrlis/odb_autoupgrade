@@ -5,7 +5,7 @@
 # Script.....: template.sh
 # Author.....: Stefan Oehrli (oes) stefan.oehrli@oradba.ch
 # Date.......: 2026.10.09
-# Version....: v0.6.0
+# Version....: v0.6.1
 # Purpose....: Template for new AutoUpgrade wrapper scripts using OraDBA patterns.
 #              Copy this file and replace all TODO sections.
 # Usage......: Copy, rename, fill in TODO sections.

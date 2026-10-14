@@ -12,7 +12,7 @@ Bash 4.2+, Java 8+, `envsubst` (package `gettext`), `expect` (keystore creation)
 
 ```bash
 # 1. Unpack anywhere, e.g. /u00/app/oracle/odb_autoupgrade
-tar xzf odb_autoupgrade-0.6.0.tar.gz
+tar xzf odb_autoupgrade-0.6.1.tar.gz
 cd odb_autoupgrade
 
 # 2. Update the AutoUpgrade JAR
@@ -38,7 +38,7 @@ AU_TARGET_HOME=/u00/app/oracle/product/19.32.0.0 \
 ```bash
 # Install into the OraDBA local base
 cd "${ORADBA_LOCAL_BASE}"
-tar xzf odb_autoupgrade-0.6.0.tar.gz
+tar xzf odb_autoupgrade-0.6.1.tar.gz
 
 # OraDBA auto-discovery loads the extension.
 # Optional: enable env/alias hooks in .extension and set
