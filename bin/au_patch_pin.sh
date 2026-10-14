@@ -16,7 +16,8 @@
 #              - An existing pin with a different value is never silently
 #                overwritten: WARN and refuse unless --force / --yes.
 #              - --resolve-mrp: additionally resolves MRP to its plain patch
-#                number (patchId from patches_info.json).
+#                number (patchId from patches_info.json); WARN when the file
+#                has no MRP entry (measured downloads have none).
 #              - Pin file: au_patch.env in the download folder, mode 0600.
 #              - WP7 implementation.
 # Reference..: https://github.com/oehrlis/odb_autoupgrade
@@ -24,6 +25,7 @@
 # ------------------------------------------------------------------------------
 # Modified...:
 # 2026.10.09 oehrli - initial implementation (WP7)
+# 2026.10.14 oehrli - --resolve-mrp warns when no MRP entry is found (F15)
 # ------------------------------------------------------------------------------
 
 set -euo pipefail
@@ -83,7 +85,9 @@ OPTIONS:
        --force        Overwrite an existing pin file with a different value
        --yes          Same as --force (non-interactive)
        --resolve-mrp  Resolve MRP keyword to its plain patch number from
-                      patches_info.json (patchId of the MRP entry)
+                      patches_info.json (patchId of the MRP entry). Downloads
+                      measured so far carry no MRP entry: then MRP is kept
+                      and a WARN is printed
 
 ARGUMENTS:
   <download-folder>   Path to the download folder containing patches_info.json.
@@ -467,6 +471,10 @@ main() {
     log_info "RU version:        ${_PI_RU_VERSION}"
     [[ -n "${_PI_MRP_PATCHID}" ]] && log_info "MRP patchId:       ${_PI_MRP_PATCHID}"
     log_info "AU_PATCH (pinned): ${_new_pin}"
+    if [[ "${RESOLVE_MRP}" == true && -z "${_PI_MRP_PATCHID}" && ",${_current_patch// /}," == *,MRP,* ]]; then
+        log_warn "--resolve-mrp: no MRP entry in patches_info.json - MRP keyword kept;" \
+            "record the MOS patch number in the profile header instead (doc/patch-profiles.md)"
+    fi
 
     # Write pin file
     _au_write_pin "${_pin_file}" "${_new_pin}"

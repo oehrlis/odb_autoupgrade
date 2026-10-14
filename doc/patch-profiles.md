@@ -55,7 +55,7 @@ error that lists every directory searched.
 | --- | --- | --- |
 | `recommended` | `RECOMMENDED` | Current Oracle recommendation; the pin file converts this to `RECOMMENDED:<x.y>` after download |
 | `19.32` | `RU:19.32,OPATCH,OJVM:19.32,DPBP,MRP` | Pinned release with the latest MRP at download time |
-| `cputest-example` | `RU:19.32,OPATCH,OJVM:19.32,DPBP,99999999` | CPU-test example; the placeholder `99999999` must be replaced with the actual patch ID before use |
+| `cputest-example` | `RU:19.32,OPATCH,OJVM:19.32,DPBP,JDK,MRP` | CPU-test example; monthly patch by keyword, MOS patch number as header record |
 | `21c-cspu` | `RU:21.3,OPATCH,CSPU` | 21c with CSPU; replace the RU version before use |
 <!-- markdownlint-restore -->
 
@@ -92,7 +92,7 @@ patch list to `${AU_DOWNLOAD_FOLDER}/au_patch.env`. The pin file is at level 6 i
 # Run by hand for a specific folder
 bin/au_patch_pin.sh patches/recommended
 
-# Resolve the MRP keyword to a plain patch number (for CPU-test reproducibility)
+# Replace MRP by its patch ID if patches_info.json lists one (see below)
 bin/au_patch_pin.sh --resolve-mrp patches/recommended
 
 # Skip auto-pinning for this run
@@ -105,8 +105,9 @@ Rules:
 - An unversioned `RU` becomes `RU:<x.y>,...`; an already-versioned list is left unchanged.
 - An existing pin with a different value is not overwritten silently: the conflict is reported as WARN with both
   values. Use `--force` to replace.
-- `au_patch_pin.sh --resolve-mrp` writes the MRP ARU patch ID from `patches_info.json` into the pin file, making
-  the set fully reproducible. See the `cputest-example` profile for the workflow.
+- `au_patch_pin.sh --resolve-mrp` replaces `MRP` by a patch ID only if `patches_info.json` lists an MRP entry.
+  Downloads measured so far (2026-10-05, also with a gold image) have none: the keyword is kept and a WARN is
+  printed. Do not rely on it for reproducibility - see [CPU-Test Workflow](#cpu-test-workflow).
 
 ## Verification (au_patch_verify.sh)
 
@@ -123,21 +124,22 @@ integrity, not Oracle authenticity.
 
 ## CPU-Test Workflow
 
-A reproducible CPU-test set consists of a prior RU with a pinned MRP:
+A CPU-test profile pins the RU and requests the monthly patch by keyword (`MRP` on Linux x86-64, `CSPU`
+otherwise). The MOS patch number of the tested month goes into the profile header as a record, not into
+`AU_PATCH`: the gold image carries the monthly level, a plain patch number would not be part of it. See the
+`cputest-example` profile.
 
-1. Download using the `recommended` or a versioned profile.
-2. Run `au_patch_pin.sh --resolve-mrp` to write the MRP patch ID to the pin file.
-3. Copy the profile and the pin file to the `cpu-patch-tests` catalogue (private repository) with `AU_PROFILE_DIR`
-   pointing to it.
-4. Create the Oracle Home with `--profile <quarter>` to pick the exact set.
+1. Write the profile with `AU_PATCH=RU:<x.y>,...,MRP` and the record line `# Record....: MOS MRP <number>`.
+2. Download with `--profile <name>`. AutoUpgrade resolves `MRP` to the latest monthly patch for that RU.
+3. Compare the downloaded monthly patch with the record (`patches_info.json`, `au_patch_verify.sh`).
+4. Keep the download folder: create_home from it is reproducible, a later re-download may bring a newer level.
 
-The monthly profile content (real MRP patch IDs) is maintained outside this repository and consumed through
+The monthly profiles are generated in the private `cpu-patch-tests` repository and consumed through
 `AU_PROFILE_DIR`. The profile format belongs to `odb_autoupgrade`; the profile data belongs to the consumer.
 
 ## Not Yet Verified
 
-- The field names read from `patches_info.json` (`releaseUpdate`, `patchId`) and the MRP mapping of
-  `au_patch_pin.sh --resolve-mrp` are tested against fixtures, not yet against a folder from a live download with
-  My Oracle Support access. Check the written `au_patch.env` after the first real download.
+- The field names read from `patches_info.json` (`releaseUpdate`, `patchId`) are tested against fixtures. The MRP
+  mapping of `au_patch_pin.sh --resolve-mrp` has no live counterpart: measured downloads list no MRP entry.
 - A pinned MRP (plain patch number) is not part of an Oracle gold image; use `AU_GOLD_IMAGE=NO` with such profiles
   until create_home with image plus separate MRP zip is confirmed.

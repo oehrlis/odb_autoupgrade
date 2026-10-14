@@ -223,6 +223,33 @@ PROF
 # au_validate_profile: keyword rules
 # ---------------------------------------------------------------------------
 
+@test "au_validate_profile: JDK, OCW, GI accepted without warning (F14)" {
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        source '${LIB}'
+        export AU_PATCH='RU:19.28,OPATCH,OJVM,DPBP,MRP,JDK,OCW,JDK:19.28,OCW:19.28'
+        export AU_TARGET_VERSION=19
+        export AU_PLATFORM=LINUX.X64
+        au_validate_profile 2>&1
+        AU_PATCH='GI,GI:19.28,MRP,OPATCH' au_validate_profile 2>&1
+    "
+    [ "${status}" -eq 0 ]
+    [[ "${output}" != *"unknown keyword"* ]]
+}
+
+@test "au_validate_profile: unknown keyword still warns (F14)" {
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        source '${LIB}'
+        export AU_PATCH='RU:19.28,OPATCH,JDKX'
+        export AU_TARGET_VERSION=19
+        export AU_PLATFORM=LINUX.X64
+        au_validate_profile 2>&1
+    "
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"unknown keyword 'JDKX'"* ]]
+}
+
 @test "au_validate_profile: CSPU on LINUX.X64 for 19c -> exit 1" {
     run bash -c "
         export AUTOUPGRADE_BASE='${WORK_DIR}'
@@ -762,4 +789,33 @@ PROF
     "
     [ "${status}" -ne 0 ]
     [[ "${output}" == *"Invalid"* || "${output}" == *"ERROR"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Shipped profiles (F14, F15)
+# ---------------------------------------------------------------------------
+
+@test "shipped profiles: apply and validate without unknown-keyword warning (F14)" {
+    local p name
+    for p in "${REPO_ROOT}"/etc/profiles/*.profile; do
+        name="${p##*/}"
+        # copy: the check must not depend on the checkout's directory mode
+        install -m 600 "${p}" "${WORK_DIR}/${name}"
+        run bash -c "
+            export AUTOUPGRADE_BASE='${WORK_DIR}'
+            source '${LIB}'
+            au_apply_profile '${WORK_DIR}/${name}'
+            au_validate_profile 2>&1
+        "
+        [ "${status}" -eq 0 ] || { echo "${name}: ${output}"; return 1; }
+        [[ "${output}" != *"unknown keyword"* ]] || { echo "${name}: ${output}"; return 1; }
+    done
+}
+
+@test "shipped cputest-example: MRP keyword, no placeholder patch number (F15)" {
+    local p="${REPO_ROOT}/etc/profiles/cputest-example.profile"
+    grep -qx 'AU_PATCH=RU:19.32,OPATCH,OJVM:19.32,DPBP,JDK,MRP' "${p}"
+    run grep -c '99999999' "${p}"
+    [ "${output}" = "0" ]
+    grep -q '^# Record\.*: MOS MRP' "${p}"
 }
