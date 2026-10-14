@@ -12,7 +12,8 @@
 #              - Configuration loaded via au_load_config (7-level precedence).
 #              - -config: resolved as absolute, CWD-relative, or
 #                AUTOUPGRADE_BASE/etc-relative; env vars expanded via au_render_cfg.
-#              - --dry-run or AUTOUPGRADE_DRY_RUN=true: print command, exit 0.
+#              - --dry-run or AUTOUPGRADE_DRY_RUN=true: print rendered config (stdout)
+#                and masked command (stderr), exit 0.
 #              - AutoUpgrade exit code is propagated (never swallowed by set -e).
 #              - Deprecation WARN when old config basenames are used.
 #              - After -mode download: VDGI_*/GOLD_IMAGE scan via au_log_scan.
@@ -26,6 +27,7 @@
 # 2026.10.09 oehrli - main(), au_load_config, --dry-run flag,
 #                     mode parsing, deprecation WARN, au_check_cfg_mode,
 #                     au_render_cfg, au_log_scan
+# 2026.10.14 oehrli - --dry-run prints the rendered config (#6)
 # ------------------------------------------------------------------------------
 
 set -euo pipefail
@@ -102,7 +104,8 @@ directly to AutoUpgrade; only --help, --dry-run, and -config are intercepted.
 
 Wrapper-only options:
   --help              Show this message and exit (AutoUpgrade uses -help)
-  --dry-run           Print the java command line (secrets masked) and exit 0
+  --dry-run           Print the rendered config (stdout) and the java command
+                      line (stderr), secrets masked, and exit 0
   --profile <name>    Select a patch profile by name or path (WP13)
   --no-pin            Skip writing the pin file after -mode download
 
@@ -114,7 +117,7 @@ Environment variables:
   AUTOUPGRADE_JAVA_HOME        JDK home to use instead of PATH / ORACLE_HOME.
   AUTOUPGRADE_JAVA_OPTS        Additional JVM options (word-split on spaces).
   AUTOUPGRADE_DEBUG_SSL        true = add -Djavax.net.debug=ssl:handshake.
-  AUTOUPGRADE_DRY_RUN          true = print java command line, exit 0.
+  AUTOUPGRADE_DRY_RUN          true = same as --dry-run.
   AUTOUPGRADE_ENV_FILE         Path to a custom env file (level-3 override).
   ORADBA_CONFIG_DIR            Site config dir for autoupgrade.env (level-4).
 
@@ -209,6 +212,27 @@ mask_cmd() {
         masked="${masked:+${masked} }${arg}"
     done
     echo "${masked}"
+}
+
+# ------------------------------------------------------------------------------
+# Function: print_masked_cfg
+# Purpose.: Print a rendered AutoUpgrade config with secret values masked.
+# Args....: $1 - rendered config file
+# Returns.: 0; prints the config to stdout
+# Notes...: Values of keys containing pass, pwd, secret, token or credential
+#           (case-insensitive) are replaced by ****. Comments are kept.
+# ------------------------------------------------------------------------------
+print_masked_cfg() {
+    local _line _key _re='^[[:space:]]*([^#=[:space:]][^=]*)='
+    while IFS= read -r _line || [[ -n "${_line}" ]]; do
+        if [[ "${_line}" =~ ${_re} ]]; then
+            _key="${BASH_REMATCH[1]}"
+            case "${_key,,}" in
+                *pass* | *pwd* | *secret* | *token* | *credential*) _line="${_key}=****" ;;
+            esac
+        fi
+        printf '%s\n' "${_line}"
+    done < "$1"
 }
 
 # ------------------------------------------------------------------------------
@@ -372,9 +396,13 @@ main() {
     fi
 
     # -------------------------------------------------------------------------
-    # Dry-run: print masked command line and exit
+    # Dry-run: print rendered config (stdout) and masked command line, exit
     # -------------------------------------------------------------------------
     if [[ "${DRY_RUN}" == true ]]; then
+        if [[ "${RESOLVE_CONFIG}" == true ]]; then
+            echo "DRY-RUN: rendered config from ${CONFIG_FILE}:" >&2
+            print_masked_cfg "${TMP_CFG}"
+        fi
         echo "DRY-RUN: $(mask_cmd "${FULL_CMD[@]}")" >&2
         exit 0
     fi

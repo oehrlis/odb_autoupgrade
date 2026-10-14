@@ -60,6 +60,9 @@ Usage: au_run.sh [--help] [--dry-run] [--profile <name|path>] [--no-pin]
 ```
 
 Wrapper-only options: `--help`, `--dry-run`, `--profile <name>`, `--no-pin`.
+`--dry-run` prints the rendered config to stdout and the java command line to stderr, then exits 0 without
+running AutoUpgrade. Values of keys containing `pass`, `pwd`, `secret`, `token` or `credential` are shown as
+`****`.
 AutoUpgrade options use single-dash form (`-config`, `-patch`, `-mode`, `-help`).
 
 ### au_update_jar.sh

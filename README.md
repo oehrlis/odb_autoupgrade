@@ -3,6 +3,11 @@
 Oracle AutoUpgrade patching tooling for Oracle Database 19c, 21c and 23ai.
 Runs standalone or as an OraDBA extension; the same scripts and config work in both modes.
 
+## Prerequisites
+
+Bash 4.2+, Java 8+, `envsubst` (package `gettext`), `expect` (keystore creation) and `curl`. Details:
+[Installation](doc/installation.md#prerequisites).
+
 ## Quick Start - Standalone
 
 ```bash
