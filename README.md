@@ -132,7 +132,8 @@ See [doc/patch-profiles.md](doc/patch-profiles.md).
 - [Oracle Home](doc/oracle-home.md) - create_home, edition, OS groups, gold image, naming
 - [Keystore and JAR](doc/keystore-and-jar.md) - MOS keystore, auto-login, JAR update flow
 - [Log Cleanup](doc/log-cleanup.md) - safe cleanup of AutoUpgrade log directory
-- [Proxy and Truststore](doc/proxy-and-truststore.md) - TLS inspection, proxy config, endpoints
+- [Proxy and Truststore](doc/proxy-and-truststore.md) - TLS inspection, proxy config, endpoint discovery
+- [Network Endpoints](doc/network-endpoints.md) - host table for network teams, connectivity check
 - [Upgrade Notes 0.6.0](doc/upgrade-0.6.0.md) - migration from 0.5.0 and legacy layout
 - [All docs](doc/index.md)
 

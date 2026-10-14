@@ -57,6 +57,7 @@
 #                     truststore PEM for curl --cacert, issuer O= exact match,
 #                     drop Oracle/Microsoft from public CA list,
 #                     report all redirect-hop issuers
+# 2026.10.14 oehrli - public sources per endpoint, edelivery.oracle.com added
 # ------------------------------------------------------------------------------
 
 set -euo pipefail
@@ -100,15 +101,17 @@ _WARN_COUNT=0
 _FLAGGED_HOSTS=()
 
 # Built-in endpoint list.  Format: host|url|purpose|source
-# Source field references the AutoUpgrade jar class or Oracle docs that
-# confirms each endpoint is required.
+# Source: Oracle Database Upgrade Guide 26ai, AutoUpgrade parameter "download"
+# (lists the endpoints a download needs), or the odb_autoupgrade script that
+# contacts the host.  See doc/network-endpoints.md.
 AU_ENDPOINTS=(
-    "login-ext.identity.oraclecloud.com|https://login-ext.identity.oraclecloud.com/oauth2/v1/token|MOS OAuth login (password + device flow)|jar 26.6 AruProductionServer"
-    "updates.oracle.com|https://updates.oracle.com/Orion/Services/search|MOS ARU REST: patch search metadata downloads|jar 26.6 SearchBuilder/MetadataBuilder"
-    "transport.oracle.com|https://transport.oracle.com/|Oracle Update Advisor (gold image)|jar 26.6 UpdaterSite"
-    "download.oracle.com|https://download.oracle.com/otn-pub/otn_software/autoupgrade.json|AutoUpgrade version/JAR self-patch|jar 26.6 ApplyAU"
-    "aru-akam.oracle.com|https://aru-akam.oracle.com/|patch file downloads (URL returned by ARU)|Oracle docs"
-    "objectstorage.us-ashburn-1.oraclecloud.com|https://objectstorage.us-ashburn-1.oraclecloud.com/|gold image file download (OUA)|Oracle docs"
+    "login-ext.identity.oraclecloud.com|https://login-ext.identity.oraclecloud.com/oauth2/v1/token|MOS OAuth login (password + device flow)|Upgrade Guide: download"
+    "updates.oracle.com|https://updates.oracle.com/Orion/Services/search|MOS ARU REST: patch search metadata downloads|Upgrade Guide: download"
+    "aru-akam.oracle.com|https://aru-akam.oracle.com/|patch file downloads (URL returned by ARU)|Upgrade Guide: download"
+    "edelivery.oracle.com|https://edelivery.oracle.com/|latest AutoUpgrade (patch keyword AU)|Upgrade Guide: download"
+    "transport.oracle.com|https://transport.oracle.com/|Oracle Update Advisor (gold image)|Upgrade Guide: download"
+    "objectstorage.us-ashburn-1.oraclecloud.com|https://objectstorage.us-ashburn-1.oraclecloud.com/|gold image file download (OUA)|Upgrade Guide: download"
+    "download.oracle.com|https://download.oracle.com/otn-pub/otn_software/autoupgrade.json|AutoUpgrade JAR update (au_update_jar.sh)|au_update_jar.sh"
 )
 
 # Issuers from well-known public CAs.  The O= value of the issuer DN is

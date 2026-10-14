@@ -13,7 +13,8 @@ Oracle AutoUpgrade patching tooling - runs standalone or as an OraDBA extension.
 - [Oracle Home Management](oracle-home.md) - create_home, edition, OS groups, gold image paths, home naming
 - [Keystore and JAR](keystore-and-jar.md) - MOS keystore lifecycle, auto-login modes, JAR update flow
 - [Log Cleanup](log-cleanup.md) - safe cleanup of AutoUpgrade global_log_dir
-- [Proxy and Truststore](proxy-and-truststore.md) - TLS inspection, proxy config, required network endpoints
+- [Proxy and Truststore](proxy-and-truststore.md) - TLS inspection, proxy config, endpoint discovery
+- [Network Endpoints](network-endpoints.md) - host table for network teams, connectivity check, request template
 
 ## Reference
 

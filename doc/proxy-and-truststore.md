@@ -145,21 +145,9 @@ On OL/RHEL systems, add your corporate CA certificate to the system truststore s
 
 ## Required Network Endpoints
 
-The AutoUpgrade JAR contacts these hosts. All must be allowed on your proxy and (if using TLS inspection)
+The host table for network teams - purpose, when each host is needed, sources and a change request template - is
+in [Network Endpoints](network-endpoints.md). All hosts must be allowed on the proxy and, with TLS inspection,
 exempted from inspection or the inspection CA must be in the truststore.
-
-<!-- markdownlint-disable MD013 MD060 -->
-
-| Host | Purpose | Needed For | Source |
-|------|---------|-----------|--------|
-| login-ext.identity.oraclecloud.com | MOS OAuth login (password and device flow) | All MOS modes | JAR 26.6 |
-| updates.oracle.com | ARU REST: patch search, metadata, release IDs | Download mode | JAR 26.6 |
-| transport.oracle.com | Oracle Update Advisor (gold image download), OUA registration | Gold image AUTO/YES, download | JAR 26.6 |
-| download.oracle.com | AutoUpgrade JAR version file, AU tool updates | Patch AU keyword, JAR update | JAR 26.6 |
-| aru-akam.oracle.com | Patch file downloads (returned at runtime) | Download mode | Oracle docs |
-| objectstorage.us-ashburn-1.oraclecloud.com | Gold image file downloads (OUA) | Gold image AUTO/YES, download | Oracle docs |
-
-<!-- markdownlint-restore -->
 
 ### Discovering Runtime Download Hosts
 
@@ -421,6 +409,6 @@ Output: one check per line, summary of resolved hostnames for the network team, 
 
 - `0` - All checks passed
 - `1` - At least one check failed (hard error)
-- `2` - Some checks skipped (optional endpoints, informational)
+- `2` - Only warnings, no failure (for example a non-public TLS issuer)
 
 Review the output with your network team to confirm proxy allowlisting and TLS inspection exemptions.

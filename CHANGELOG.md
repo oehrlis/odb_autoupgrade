@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- `doc/network-endpoints.md` - endpoint table for network teams (purpose, when needed, public source), TLS
+  inspection, connectivity check, change request template
+- `au_check_connectivity.sh` checks `edelivery.oracle.com` (latest AutoUpgrade, listed by the Upgrade Guide)
+
 ### Fixed
 
 - `au_gen_config.sh --groups-standard` rendered no `os*_group` lines: unset `AU_GROUP_*` now default to the
@@ -11,6 +17,8 @@
 - Prerequisites name `gettext` (`envsubst`) and `expect`; minimal `oraclelinux:9` images lack `gettext` (#5)
 - `au_validate_profile` warned `unknown keyword 'JDK'` on every profile load: `JDK`, `OCW` and `GI` (also with
   version) are valid, the same set `au_patch_pin.sh` accepts
+- `doc/proxy-and-truststore.md` documented exit code 2 of `au_check_connectivity.sh` as "checks skipped"; it means
+  warnings only. Endpoint sources now cite the Oracle Upgrade Guide instead of jar internals
 - `au_patch_pin.sh --resolve-mrp` kept the `MRP` keyword silently when `patches_info.json` has no MRP entry (the
   case in every measured download); it now prints a WARN
 
