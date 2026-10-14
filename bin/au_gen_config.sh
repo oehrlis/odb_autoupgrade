@@ -18,6 +18,7 @@
 # ------------------------------------------------------------------------------
 # Modified...:
 # 2026.10.09 oehrli - initial version for WP9
+# 2026.10.14 oehrli - --groups-standard applies the AU_GROUP_* defaults (#7)
 # ------------------------------------------------------------------------------
 
 set -euo pipefail
@@ -112,7 +113,8 @@ Options:
   --inventory <path>      Oracle inventory location (default: from /etc/oraInst.loc)
   --inventory-group <grp> Inventory group (default: from /etc/oraInst.loc)
   --groups-from <home>    Read OS groups from <home>/rdbms/lib/config.c
-  --groups-standard       Use AU_GROUP_* env vars as-is (set by site config)
+  --groups-standard       Use AU_GROUP_* env vars (site config); unset ones
+                          default to the preinstall names (dba, oper, ...)
   --skip-group-check      Skip membership check (for dev/test without Oracle groups)
   --output <file>         Write config to FILE (mode 0600). Implies --force to
                           allow re-generation; use --force explicitly to overwrite.
@@ -413,7 +415,9 @@ do_work() {
         if [[ -n "${OPT_GROUPS_FROM}" ]]; then
             _derive_groups_from_home "${OPT_GROUPS_FROM}" "--groups-from"
         elif [[ "${OPT_GROUPS_STANDARD}" == "true" ]]; then
-            log_info "Using AU_GROUP_* from environment (--groups-standard)"
+            # unset AU_GROUP_* -> preinstall RPM names (dba, oper, ...); set ones are kept
+            au_set_group_defaults
+            log_info "Using AU_GROUP_* from environment, unset ones from preinstall defaults (--groups-standard)"
         else
             log_warn "No group source specified; using AU_GROUP_* from environment (may be empty -> AU defaults to 'dba')"
         fi

@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- `au_gen_config.sh --groups-standard` rendered no `os*_group` lines: unset `AU_GROUP_*` now default to the
+  preinstall names (`dba`, `oper`, `backupdba`, `dgdba`, `kmdba`, `racdba`), set values are kept (#7)
+- `au_run.sh --dry-run` printed only the java command line: it now prints the rendered config on stdout with
+  secret values masked, as documented (#6)
+- Prerequisites name `gettext` (`envsubst`) and `expect`; minimal `oraclelinux:9` images lack `gettext` (#5)
+
 - `doc/installation.md` was still the generic extension template: it now names the repository
   `oehrlis/odb_autoupgrade`, covers the OraDBA online and offline install (`sha256sum -c`), update, standalone
   install, and explains the misleading "No releases found" message of `oradba_extension.sh`

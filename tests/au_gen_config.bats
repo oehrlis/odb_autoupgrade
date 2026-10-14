@@ -31,6 +31,24 @@ setup() {
     mkdir -p "${STUB_DIR}"
     export PATH="${STUB_DIR}:${PATH}"
 
+    # Stub id: membership check (id -nG) sees the real groups plus the six
+    # preinstall groups, like the oracle user on a preinstall host (#7).
+    # MOCK_ID_GROUPS replaces the list. Other id calls go to the real binary.
+    REAL_ID="$(command -v id)"
+    cat > "${STUB_DIR}/id" <<ISTUB
+#!/usr/bin/env bash
+if [[ "\$*" == "-nG" || "\$*" == "-Gn" ]]; then
+    if [[ -n "\${MOCK_ID_GROUPS+set}" ]]; then
+        echo "\${MOCK_ID_GROUPS}"
+    else
+        echo "\$("${REAL_ID}" -nG) oinstall dba oper backupdba dgdba kmdba racdba"
+    fi
+    exit 0
+fi
+exec "${REAL_ID}" "\$@"
+ISTUB
+    chmod +x "${STUB_DIR}/id"
+
     # Stub envsubst if needed (usually present; add a stub for isolated envs)
     if ! command -v envsubst >/dev/null 2>&1; then
         cat > "${STUB_DIR}/envsubst" <<'ESTUB'
@@ -44,7 +62,7 @@ ESTUB
 
 teardown() {
     rm -rf "${WORK_DIR}"
-    unset AUTOUPGRADE_BASE AU_ORACLE_BASE AU_EDITION AU_SOURCE_HOME AU_TARGET_HOME \
+    unset MOCK_ID_GROUPS AUTOUPGRADE_BASE AU_ORACLE_BASE AU_EDITION AU_SOURCE_HOME AU_TARGET_HOME \
           AU_GROUP_OSDBA AU_GROUP_OSOPER AU_GROUP_OSBACKUPDBA \
           AU_GROUP_OSDGDBA AU_GROUP_OSKMDBA AU_GROUP_OSRACDBA 2>/dev/null || true
 }
@@ -330,4 +348,46 @@ CONFIGC
     "
     [ "${status}" -ne 0 ]
     [[ "${output}" == *"invalid"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Issue #7: --groups-standard renders the AU_GROUP_* defaults
+# ---------------------------------------------------------------------------
+
+@test "au_gen_config.sh: --groups-standard renders six preinstall group lines (#7)" {
+    local _out="${WORK_DIR}/gen_std.cfg"
+    run bash "${SCRIPT}" \
+        --ru 19.32 \
+        --oracle-base "${WORK_DIR}/oracle_base" \
+        --edition EE \
+        --groups-standard \
+        --inventory "${WORK_DIR}/oraInventory" --inventory-group oinstall \
+        --output "${_out}" --force 2>&1
+    [ "${status}" -eq 0 ]
+    grep -qx 'patch1.home_settings.osdba_group=dba' "${_out}"
+    grep -qx 'patch1.home_settings.osoper_group=oper' "${_out}"
+    grep -qx 'patch1.home_settings.osbackupdba_group=backupdba' "${_out}"
+    grep -qx 'patch1.home_settings.osdgdba_group=dgdba' "${_out}"
+    grep -qx 'patch1.home_settings.oskmdba_group=kmdba' "${_out}"
+    grep -qx 'patch1.home_settings.osracdba_group=racdba' "${_out}"
+}
+
+@test "au_gen_config.sh: --groups-standard keeps a set AU_GROUP_* value (#7)" {
+    local _out="${WORK_DIR}/gen_std_ovr.cfg"
+    export MOCK_ID_GROUPS="oinstall osdba oper backupdba dgdba kmdba racdba"
+    run bash -c "AU_GROUP_OSDBA=osdba bash '${SCRIPT}' \
+        --ru 19.32 --oracle-base '${WORK_DIR}/oracle_base' --edition EE \
+        --groups-standard --output '${_out}' --force 2>&1"
+    [ "${status}" -eq 0 ]
+    grep -qx 'patch1.home_settings.osdba_group=osdba' "${_out}"
+    grep -qx 'patch1.home_settings.osoper_group=oper' "${_out}"
+}
+
+@test "au_gen_config.sh: --groups-standard checks membership of the defaults (#7)" {
+    export MOCK_ID_GROUPS="oinstall dba"
+    run bash "${SCRIPT}" \
+        --ru 19.32 --oracle-base "${WORK_DIR}/oracle_base" --edition EE \
+        --groups-standard --dry-run 2>&1
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"not in group 'oper'"* ]]
 }

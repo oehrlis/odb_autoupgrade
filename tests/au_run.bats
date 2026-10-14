@@ -854,22 +854,81 @@ EOF
     [[ "${output}" == *"newline"* ]]
 }
 
-@test "au_run.sh: envsubst only substitutes referenced vars, not unrelated ones" {
+@test "au_run.sh: envsubst expands referenced \${VAR} and \$VAR, never unreferenced vars" {
     make_mock_java 11
     local cfg="${WORK_DIR}/test_envsubst.cfg"
-    # Only ORACLE_HOME_19 is referenced; UNRELATED_VAR is not
-    printf 'target_home=%s\ncomment=no %s here\n' \
-        '${ORACLE_HOME_19}' '$UNRELATED_VAR' > "${cfg}"
+    # ORACLE_HOME_19 (braced) and AU_BARE (bare) are referenced; UNRELATED_VAR is not.
+    # A literal '$' not followed by a name stays as is.
+    printf 'target_home=%s\ncomment=bare %s cost 5$\n' '${ORACLE_HOME_19}' '$AU_BARE' > "${cfg}"
     run bash -c "
         export AUTOUPGRADE_JAVA_HOME='${WORK_DIR}'
         export AUTOUPGRADE_TRUSTSTORE_CANDIDATES='/nonexistent'
         export ORACLE_HOME_19='/u01/19'
+        export AU_BARE='bareval'
         export UNRELATED_VAR='SHOULD_NOT_APPEAR_IN_RESOLVED'
-        AUTOUPGRADE_DRY_RUN=true bash '${SCRIPT}' -config '${cfg}' -analyze 2>&1
-        cat '${WORK_DIR}'/../tmp/autoupgrade_resolved_* 2>/dev/null || true
+        bash '${SCRIPT}' --dry-run -config '${cfg}' -analyze 2>/dev/null
     "
-    # The run exits 0 (dry-run). UNRELATED_VAR must not expand in the resolved file.
     [ "${status}" -eq 0 ]
+    [[ "${output}" == *"target_home=/u01/19"* ]]
+    [[ "${output}" == *"comment=bare bareval cost 5\$"* ]]
+    [[ "${output}" != *"SHOULD_NOT_APPEAR_IN_RESOLVED"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Issue #6: --dry-run prints the rendered config
+# ---------------------------------------------------------------------------
+
+@test "au_run.sh: --dry-run prints rendered config on stdout (#6)" {
+    make_mock_java 11
+    local cfg="${WORK_DIR}/test_dry.cfg"
+    printf '# header comment\ntarget_home=%s\nsource_home=%s\n' \
+        '${ORACLE_HOME_19}' '${AU_DRY_EMPTY}' > "${cfg}"
+    run bash -c "
+        export AUTOUPGRADE_JAVA_HOME='${WORK_DIR}'
+        export AUTOUPGRADE_TRUSTSTORE_CANDIDATES='/nonexistent'
+        export ORACLE_HOME_19='/u01/19'
+        export AU_DRY_EMPTY=''
+        bash '${SCRIPT}' --dry-run -config '${cfg}' -analyze 2>/dev/null
+    "
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"# header comment"* ]]
+    [[ "${output}" == *"target_home=/u01/19"* ]]
+    # empty value -> line dropped by au_render_cfg
+    [[ "${output}" != *"source_home="* ]]
+    # command line goes to stderr, not stdout
+    [[ "${output}" != *"DRY-RUN:"* ]]
+    [ ! -f "${WORK_DIR}/java_args" ]
+}
+
+@test "au_run.sh: --dry-run masks secret values in rendered config (#6)" {
+    make_mock_java 11
+    local cfg="${WORK_DIR}/test_dry_secret.cfg"
+    printf 'target_home=/u01/19\nglobal.keystore_password=%s\nmy.Api_Token = %s\nproxy_pwd=%s\n' \
+        '${AU_DRY_SECRET}' '${AU_DRY_SECRET}' '${AU_DRY_SECRET}' > "${cfg}"
+    run bash -c "
+        export AUTOUPGRADE_JAVA_HOME='${WORK_DIR}'
+        export AUTOUPGRADE_TRUSTSTORE_CANDIDATES='/nonexistent'
+        export AU_DRY_SECRET='Sup3rS3cret'
+        bash '${SCRIPT}' --dry-run -config '${cfg}' -analyze 2>&1
+    "
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"target_home=/u01/19"* ]]
+    [[ "${output}" == *"global.keystore_password=****"* ]]
+    [[ "${output}" == *"proxy_pwd=****"* ]]
+    [[ "${output}" == *"Token"*"=****"* ]]
+    [[ "${output}" != *"Sup3rS3cret"* ]]
+}
+
+@test "au_run.sh: --dry-run without -config prints no config block (#6)" {
+    make_mock_java 11
+    run bash -c "
+        export AUTOUPGRADE_JAVA_HOME='${WORK_DIR}'
+        export AUTOUPGRADE_TRUSTSTORE_CANDIDATES='/nonexistent'
+        bash '${SCRIPT}' --dry-run -version 2>&1
+    "
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"DRY-RUN:"* ]]
+    [[ "${output}" != *"rendered config"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -1084,4 +1143,31 @@ EOF
     "
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"${custom_jar_dir}"* || "${output}" == *"autoupgrade.jar"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Issue #5: envsubst (gettext) missing
+# ---------------------------------------------------------------------------
+
+@test "au_run.sh: missing envsubst -> exit 1 naming gettext (#5)" {
+    make_mock_java 11
+    # PATH copy without envsubst: link every command from PATH except envsubst
+    local nopath="${WORK_DIR}/nopath" _d _f
+    mkdir -p "${nopath}"
+    local IFS=:
+    for _d in ${PATH}; do
+        [[ -d "${_d}" ]] || continue
+        for _f in "${_d}"/*; do
+            [[ "${_f##*/}" == envsubst ]] && continue
+            [[ -x "${_f}" && ! -e "${nopath}/${_f##*/}" ]] && ln -s "${_f}" "${nopath}/${_f##*/}"
+        done
+    done
+    unset IFS
+    local cfg="${WORK_DIR}/test_noenvsubst.cfg"
+    printf 'target_home=%s\n' '${ORACLE_HOME_19}' > "${cfg}"
+    run env PATH="${nopath}" AUTOUPGRADE_JAVA_HOME="${WORK_DIR}" \
+        AUTOUPGRADE_TRUSTSTORE_CANDIDATES=/nonexistent ORACLE_HOME_19=/u01/19 \
+        "${nopath}/bash" "${SCRIPT}" --dry-run -config "${cfg}" -analyze
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"envsubst not found"*"gettext"* ]]
 }

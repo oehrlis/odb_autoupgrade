@@ -144,7 +144,12 @@ with a deprecation warning that names `au_patch.cfg`.
 ## Dropped Empty Lines
 
 When a variable in `au_patch.cfg` is empty after expansion, `au_render_cfg` drops that line and names it in the
-output. With `--dry-run` the rendered config and the list of dropped keys are printed without running AutoUpgrade.
+output. With `--dry-run` the rendered config (stdout, secret values masked) and the list of dropped keys (log)
+are printed without running AutoUpgrade:
+
+```bash
+bin/au_run.sh --dry-run --profile recommended -config etc/au_patch.cfg -patch -mode create_home > /tmp/rendered.cfg
+```
 
 Example - create_home with a source home (edition and groups are derived by AutoUpgrade, so their lines are dropped):
 

@@ -10,6 +10,9 @@ cannot be installed from - see [Troubleshooting](#troubleshooting).
 
 - Bash 4.2 or later
 - Java 8 or later for `autoupgrade.jar` (`AUTOUPGRADE_JAVA_HOME`, the `ORACLE_HOME` JDK, or `java` in `PATH`)
+- `envsubst` from the `gettext` package for `au_run.sh -config` (renders the config templates). Minimal
+  `oraclelinux:9` images lack it: `dnf install -y gettext`
+- `expect` for `au_keystore.sh --create`
 - `curl` for JAR updates, connectivity checks and downloads
 - For the extension mode: OraDBA with `oradba_extension.sh` (tested with OraDBA 1.1.1)
 
