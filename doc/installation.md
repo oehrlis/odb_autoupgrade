@@ -1,205 +1,124 @@
 # Installation
 
-This guide covers installing and setting up an OraDBA extension.
+odb_autoupgrade runs standalone or as an OraDBA extension. Both modes use the same release tarball
+`odb_autoupgrade-<version>.tar.gz` from [GitHub Releases](https://github.com/oehrlis/odb_autoupgrade/releases).
+
+The repository is `oehrlis/odb_autoupgrade`. The legacy repository `oehrlis/autoupgrade` is private and
+cannot be installed from - see [Troubleshooting](#troubleshooting).
 
 ## Prerequisites
 
-- OraDBA v0.17.0 or later installed
-- Bash shell environment
-- Appropriate permissions for installation directory
+- Bash 4.2 or later
+- Java 8 or later for `autoupgrade.jar` (`AUTOUPGRADE_JAVA_HOME`, the `ORACLE_HOME` JDK, or `java` in `PATH`)
+- `curl` for JAR updates, connectivity checks and downloads
+- For the extension mode: OraDBA with `oradba_extension.sh` (tested with OraDBA 1.1.1)
 
-## Installation Methods
+## OraDBA Extension
 
-### Method 1: Extract to OraDBA Local Directory (Recommended)
-
-Extract the extension to your OraDBA local directory for automatic discovery:
-
-```bash
-# Set OraDBA base directory (if not already set)
-export ORADBA_LOCAL_BASE="${ORACLE_BASE}/local"
-
-# Extract extension
-cd "${ORADBA_LOCAL_BASE}"
-tar -xzf /path/to/extension-1.0.0.tar.gz
-
-# Verify extraction
-ls -la extension/
-```
-
-**Result:** The extension is automatically discovered when you next source `oraenv.sh`.
-
-### Method 2: Custom Location
-
-Extract to a custom location and OraDBA will discover it:
+### Online Install
 
 ```bash
-# Extract to custom directory
-mkdir -p /opt/oracle/extensions
-cd /opt/oracle/extensions
-tar -xzf /path/to/extension-1.0.0.tar.gz
-
-# OraDBA will find it if it's parallel to OraDBA installation
+oradba_extension.sh add oehrlis/odb_autoupgrade           # latest release
+oradba_extension.sh add oehrlis/odb_autoupgrade@v0.6.0    # specific release
 ```
 
-## Verification
+The installer reads the release through the GitHub API (`api.github.com`) and downloads the asset
+`odb_autoupgrade-<version>.tar.gz`. A correct install prints `Latest release: v<version>` and a download URL
+under `/releases/download/`.
 
-### 1. Check Extension is Loaded
+Check the result:
 
 ```bash
-# Source OraDBA environment
-source oraenv.sh MYSID
-
-# List loaded extensions
-oradba_extension.sh list
-
-# Should show your extension
+oradba_extension.sh validate odb_autoupgrade
+cat "${ORADBA_LOCAL_BASE}/odb_autoupgrade/VERSION"
+ls "${ORADBA_LOCAL_BASE}/odb_autoupgrade/.extension.checksum"
 ```
 
-### 2. Verify Scripts are in PATH
+`.extension.checksum` is only part of a release tarball. If it is missing, the installer fell back to a branch
+archive - see [Troubleshooting](#troubleshooting).
+
+### Offline Install
+
+Use this path on hosts without access to `api.github.com`, or when the API rate limit is exhausted. Download
+both release assets on a host with access and copy them over:
 
 ```bash
-# Check if extension scripts are available
-which my-custom-script.sh
-
-# Should return path to the script
+VERSION=0.6.0
+BASE_URL="https://github.com/oehrlis/odb_autoupgrade/releases/download/v${VERSION}"
+curl -fLO "${BASE_URL}/odb_autoupgrade-${VERSION}.tar.gz"
+curl -fLO "${BASE_URL}/odb_autoupgrade-${VERSION}.tar.gz.sha256"
 ```
 
-### 3. Verify SQL Scripts
+On the target host verify the tarball and install it as a local file:
 
 ```bash
-# Check SQLPATH includes extension
-echo $SQLPATH | tr ':' '\n' | grep extension
-
-# Should show extension sql directory
+sha256sum -c "odb_autoupgrade-${VERSION}.tar.gz.sha256"
+oradba_extension.sh add "$PWD/odb_autoupgrade-${VERSION}.tar.gz"
 ```
 
-## Configuration
-
-### Using Configuration Examples
-
-Extensions provide example configurations in their `etc/` directory:
+### Update
 
 ```bash
-# View example configuration
-cat "${ORADBA_LOCAL_BASE}/extension/etc/extension.conf.example"
-
-# Copy settings to main OraDBA config
-vim "${ORADBA_PREFIX}/etc/oradba_customer.conf"
-
-# Add needed settings from the example
+oradba_extension.sh add oehrlis/odb_autoupgrade --update
+oradba_extension.sh add "$PWD/odb_autoupgrade-${VERSION}.tar.gz" --update   # offline
 ```
 
-### Configuration Locations
+The update creates a full backup `odb_autoupgrade_backup_<timestamp>` next to the extension, then replaces
+`bin/`, `lib/` and `etc/`. Files in `etc/` that differ from the release checksum and user-added `*.env` and
+`*.conf` files are kept. `keystore/`, `jar/` and `patches/` are not touched.
 
-OraDBA checks configurations in this order:
+Read the release notes before an update; [Upgrade 0.6.0](upgrade-0.6.0.md) covers the migration from 0.5.0.
 
-1. `${ORADBA_PREFIX}/etc/oradba.conf` - Main configuration
-2. `${ORADBA_PREFIX}/etc/oradba_customer.conf` - Customer overrides
-3. Extension configurations (loaded automatically)
-
-## Integrity Verification
-
-Verify extension integrity after installation:
+## Standalone
 
 ```bash
-# OraDBA automatically verifies checksums when loading extensions
-# Check logs for verification results
-grep -i checksum "${ORADBA_PREFIX}/log/oradba.log"
+mkdir -p /u00/app/oracle/local
+cd /u00/app/oracle/local
+sha256sum -c odb_autoupgrade-0.6.0.tar.gz.sha256
+tar xzf odb_autoupgrade-0.6.0.tar.gz
+cd odb_autoupgrade
+cp etc/autoupgrade.env.example etc/autoupgrade.env
+chmod go-w etc etc/autoupgrade.env
 ```
 
-If checksums don't match, you'll see a warning indicating which files changed.
+The scripts refuse config files in group- or world-writable locations; see
+[Configuration](configuration.md#file-security-rules). To update, extract the new tarball over the old directory
+after a backup of `etc/`, `keystore/` and `jar/`.
 
-## Updating
-
-To update an extension:
+## First Steps
 
 ```bash
-# Remove old version
-rm -rf "${ORADBA_LOCAL_BASE}/extension"
-
-# Extract new version
-cd "${ORADBA_LOCAL_BASE}"
-tar -xzf /path/to/extension-2.0.0.tar.gz
-
-# Reload environment
-source oraenv.sh MYSID
+bin/au_check_connectivity.sh      # proxy, truststore, Oracle endpoints
+bin/au_update_jar.sh              # latest autoupgrade.jar
+bin/au_keystore.sh --create       # MOS credentials keystore
 ```
 
-## Uninstallation
-
-To remove an extension:
-
-```bash
-# Remove extension directory
-rm -rf "${ORADBA_LOCAL_BASE}/extension"
-
-# Reload environment
-source oraenv.sh MYSID
-```
+See [Proxy and Truststore](proxy-and-truststore.md) for hosts behind a TLS-inspecting proxy and
+[Keystore and JAR](keystore-and-jar.md) for the keystore lifecycle.
 
 ## Troubleshooting
 
-### Extension Not Loaded
+### "No releases found"
 
-**Problem:** Extension doesn't appear in `oradba_extension.sh list`
+`oradba_extension.sh` prints `No releases found, checking for tags...` whenever the GitHub API call fails, not
+only when a repository has no release. Typical causes:
 
-**Solutions:**
+| Cause | Check |
+| --- | --- |
+| Wrong repository name, e.g. the private legacy `oehrlis/autoupgrade` | use `oehrlis/odb_autoupgrade` |
+| API rate limit exhausted (60 requests per hour per IP without a token, shared NAT counts once) | `curl -s https://api.github.com/rate_limit` |
+| Proxy or firewall blocks `api.github.com` while `github.com` is allowed | `curl -fsSI https://api.github.com/repos/oehrlis/odb_autoupgrade/releases/latest` |
 
-1. Check directory location:
+With the wrong repository name the install fails with a 404. With the two API failures the installer falls
+back to the **main branch archive** and reports success: the result is the development tree, not a release
+(`tests/`, `Makefile`, no `.extension.checksum`). Remove that directory and use the
+[Offline Install](#offline-install).
 
-   ```bash
-   # Extension must be parallel to OraDBA
-   ls -la "${ORADBA_LOCAL_BASE}"/
-   ```
+### Extension Not Listed
 
-2. Verify `.extension` file exists:
+```bash
+oradba_extension.sh list
+cat "${ORADBA_LOCAL_BASE}/odb_autoupgrade/.extension"
+```
 
-   ```bash
-   cat "${ORADBA_LOCAL_BASE}/extension/.extension"
-   ```
-
-3. Check for errors:
-
-   ```bash
-   tail -f "${ORADBA_PREFIX}/log/oradba.log"
-   ```
-
-### Scripts Not in PATH
-
-**Problem:** Extension scripts not found
-
-**Solutions:**
-
-1. Reload environment:
-
-   ```bash
-   source oraenv.sh MYSID
-   ```
-
-2. Check PATH:
-
-   ```bash
-   echo $PATH | tr ':' '\n' | grep extension
-   ```
-
-### Checksum Warnings
-
-**Problem:** Checksum verification warnings appear
-
-**Solutions:**
-
-1. Re-download extension from official source
-2. Verify SHA256 checksum of tarball:
-
-   ```bash
-   sha256sum extension-1.0.0.tar.gz
-   # Compare with .sha256 file
-   ```
-
-3. Check `.checksumignore` if you've added custom files
-
-## Next Steps
-
-- Review [Configuration](configuration.md) options
-- Explore [Reference](reference.md) for available scripts and tools
-- Check [Development](development.md) if contributing
+The extension directory must be directly below `ORADBA_LOCAL_BASE` and contain `.extension`.
