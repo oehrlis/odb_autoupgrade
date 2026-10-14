@@ -120,7 +120,7 @@ Shipped profiles in `etc/profiles/`:
 
 - `recommended` - current Oracle recommendation, pinned to `RECOMMENDED:<x.y>` after download
 - `19.32` - RU 19.32 with OPatch, OJVM, DPBP, MRP
-- `cputest-example` - reproducible CPU-test with pinned MRP (replace placeholder before use)
+- `cputest-example` - CPU-test: pinned RU, MRP keyword, MOS patch number as header record
 - `21c-cspu` - 21c with CSPU (valid on Linux for 21c; replace RU version before use)
 
 See [doc/patch-profiles.md](doc/patch-profiles.md).

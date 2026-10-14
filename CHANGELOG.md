@@ -9,6 +9,16 @@
 - `au_run.sh --dry-run` printed only the java command line: it now prints the rendered config on stdout with
   secret values masked, as documented (#6)
 - Prerequisites name `gettext` (`envsubst`) and `expect`; minimal `oraclelinux:9` images lack `gettext` (#5)
+- `au_validate_profile` warned `unknown keyword 'JDK'` on every profile load: `JDK`, `OCW` and `GI` (also with
+  version) are valid, the same set `au_patch_pin.sh` accepts
+- `au_patch_pin.sh --resolve-mrp` kept the `MRP` keyword silently when `patches_info.json` has no MRP entry (the
+  case in every measured download); it now prints a WARN
+
+### Changed
+
+- `cputest-example` profile and the CPU-test workflow in `doc/patch-profiles.md`: the monthly patch is requested
+  by keyword (`AU_PATCH=RU:19.32,OPATCH,OJVM:19.32,DPBP,JDK,MRP`, `AU_GOLD_IMAGE=YES`), the MOS patch number is a
+  header record only - the convention of the `cpu-patch-tests` profiles. The `99999999` placeholder is gone
 
 - `doc/installation.md` was still the generic extension template: it now names the repository
   `oehrlis/odb_autoupgrade`, covers the OraDBA online and offline install (`sha256sum -c`), update, standalone

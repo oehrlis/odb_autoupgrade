@@ -325,7 +325,7 @@ Shipped profiles (`etc/profiles/`):
 | --- | --- | --- |
 | `recommended` | `RECOMMENDED` | current recommendation; pinned to `RECOMMENDED:<x.y>` after the download |
 | `19.32` | `RU:19.32,OPATCH,OJVM:19.32,DPBP,MRP` | pinned release example |
-| `cputest-example` | `RU:19.32,OPATCH,OJVM:19.32,DPBP,<MRP patch number>` | reproducible CPU-test example; the placeholder must be replaced before use |
+| `cputest-example` | `RU:19.32,OPATCH,OJVM:19.32,DPBP,JDK,MRP` | CPU-test example; MOS patch number as header record (changed in 0.6.1, F15) |
 | `21c-cspu` | `RU:21.<n>,OPATCH,CSPU` with `AU_TARGET_VERSION=21` | the CSPU case that is valid on Linux (form validated with `RU:21.3,OPATCH,CSPU`, AU facts 13 Q2) |
 <!-- markdownlint-restore -->
 

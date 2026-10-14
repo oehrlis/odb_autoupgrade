@@ -159,6 +159,29 @@ make_patches_info_recommended() {
     grep -q '37056207' "${WORK_DIR}/patches/au_patch.env"
 }
 
+@test "au_patch_pin.sh: --resolve-mrp without MRP entry keeps MRP and warns (F15)" {
+    make_patches_info_recommended "${WORK_DIR}/patches"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        export AU_PATCH=RU,OPATCH,MRP
+        bash '${SCRIPT}' --resolve-mrp '${WORK_DIR}/patches' 2>&1
+    "
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"WARN"*"no MRP entry in patches_info.json"* ]]
+    grep -q 'AU_PATCH=RU:19.32,OPATCH,MRP' "${WORK_DIR}/patches/au_patch.env"
+}
+
+@test "au_patch_pin.sh: --resolve-mrp without MRP in AU_PATCH does not warn (F15)" {
+    make_patches_info_recommended "${WORK_DIR}/patches"
+    run bash -c "
+        export AUTOUPGRADE_BASE='${WORK_DIR}'
+        export AU_PATCH=RU,OPATCH,DPBP
+        bash '${SCRIPT}' --resolve-mrp '${WORK_DIR}/patches' 2>&1
+    "
+    [ "${status}" -eq 0 ]
+    [[ "${output}" != *"no MRP entry"* ]]
+}
+
 @test "au_patch_pin.sh: missing patches_info.json -> exit 1" {
     run bash -c "
         export AUTOUPGRADE_BASE='${WORK_DIR}'

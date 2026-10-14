@@ -1089,6 +1089,9 @@ au_validate_profile() {
             OPATCH|AU|TOOLS|GOLDIMAGE:*)
                 # Valid keywords
                 ;;
+            JDK|JDK:*|OCW|OCW:*|GI|GI:*)
+                # Valid keywords, also with version (same set as au_patch_pin.sh)
+                ;;
             *)
                 log_warn "AU_PATCH: unknown keyword '${_token}' (may be rejected by AutoUpgrade)"
                 ;;
