@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `doc/installation.md` was still the generic extension template: it now names the repository
+  `oehrlis/odb_autoupgrade`, covers the OraDBA online and offline install (`sha256sum -c`), update, standalone
+  install, and explains the misleading "No releases found" message of `oradba_extension.sh`
+
 ## 0.6.0 - 2026-10-12
 
 ### Added
