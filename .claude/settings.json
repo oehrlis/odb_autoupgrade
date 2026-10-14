@@ -1,0 +1,18 @@
+{
+  "attribution": {
+    "commit": ""
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "markdownlint --fix $CLAUDE_TOOL_OUTPUT_PATH 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}
