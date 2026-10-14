@@ -1,7 +1,7 @@
 # odb_autoupgrade Documentation
 
 Current version: see [`../VERSION`](../VERSION) | [Changelog](../CHANGELOG.md)
-Latest release: [v0.6.0](release_notes/v0.6.0.md)
+Latest release: [v0.6.1](release_notes/v0.6.1.md)
 
 Oracle AutoUpgrade patching tooling - runs standalone or as an OraDBA extension.
 
@@ -31,6 +31,8 @@ Oracle AutoUpgrade patching tooling - runs standalone or as an OraDBA extension.
 
 ## Release Notes
 
+- [v0.6.1](release_notes/v0.6.1.md) - fixes: `--groups-standard`, dry-run config output, profile keywords;
+  installation guide, network endpoint table
 - [v0.6.0](release_notes/v0.6.0.md) - Phase 2 consolidation: profiles, unified template, keystore lifecycle,
   JAR update, log cleanup, gold image tooling, home generation
 - [v0.5.0](release_notes/v0.5.0.md) - proxy and truststore, connectivity check, au_ prefix rename

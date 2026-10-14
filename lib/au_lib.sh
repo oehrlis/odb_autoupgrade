@@ -5,7 +5,7 @@
 # Module.....: au_lib.sh
 # Author.....: Stefan Oehrli (oes) stefan.oehrli@oradba.ch
 # Date.......: 2026.10.09
-# Version....: v0.6.0
+# Version....: v0.6.1
 # Purpose....: Library loader for AutoUpgrade wrapper scripts .
 #              Sources: lib/common.sh, lib/au_env.sh, lib/au_net.sh,
 #                       lib/au_tools.sh.

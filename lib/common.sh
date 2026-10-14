@@ -5,7 +5,7 @@
 # Module.....: common.sh
 # Author.....: Stefan Oehrli (oes) stefan.oehrli@oradba.ch
 # Date.......: 2026.10.09
-# Version....: v0.6.0
+# Version....: v0.6.1
 # Purpose....: Generic utilities for bash scripts - logging, error handling,
 #              argument parsing helpers. Designed to be reusable across projects.
 #              Ported from odb_datasafe/lib/common.sh v0.19.1 (2026.03.02);

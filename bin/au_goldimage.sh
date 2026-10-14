@@ -5,7 +5,7 @@
 # Script.....: au_goldimage.sh
 # Author.....: Stefan Oehrli (oes) stefan.oehrli@oradba.ch
 # Date.......: 2026.10.09
-# Version....: v0.6.0
+# Version....: v0.6.1
 # Purpose....: Self-built gold image: create, verify checksum, and install.
 #
 #              --create --home <OH> --dest <dir>
@@ -68,7 +68,7 @@ fi
 # SCRIPT DEFAULTS
 # =============================================================================
 
-export SCRIPT_VERSION="v0.6.0"
+export SCRIPT_VERSION="v0.6.1"
 
 # Operation mode (exactly one must be set)
 MODE_CREATE=false

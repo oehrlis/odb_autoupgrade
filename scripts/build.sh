@@ -121,6 +121,9 @@ CONTENT_PATHS=(
     rcv
     etc
     lib
+    doc
+    jar/README.md
+    patches/README.md
 )
 FILES=()
 for path in "${CONTENT_PATHS[@]}"; do

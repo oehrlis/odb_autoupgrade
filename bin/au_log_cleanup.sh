@@ -5,7 +5,7 @@
 # Script.....: au_log_cleanup.sh
 # Author.....: Stefan Oehrli (oes) stefan.oehrli@oradba.ch
 # Date.......: 2026.10.09
-# Version....: v0.6.0
+# Version....: v0.6.1
 # Purpose....: Safe cleanup of AutoUpgrade global_log_dir.
 #              Default: list what would be removed and what is kept (with reason).
 #              --delete removes files; requires --yes or interactive confirmation.
@@ -31,7 +31,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 LIB_DIR="${SCRIPT_DIR}/../lib"
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 readonly SCRIPT_NAME
-SCRIPT_VERSION="v0.6.0"
+SCRIPT_VERSION="v0.6.1"
 readonly SCRIPT_VERSION
 
 SCRIPT_BASE="$(dirname "${SCRIPT_DIR}")"

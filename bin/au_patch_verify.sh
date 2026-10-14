@@ -5,7 +5,7 @@
 # Name.......: au_patch_verify.sh
 # Author.....: Stefan Oehrli (oes) stefan.oehrli@oradba.ch
 # Date.......: 2026.10.09
-# Version....: v0.6.0
+# Version....: v0.6.1
 # Purpose....: Verify a download folder against patches_info.json.
 #              Checks SHA-256 and size of every listed file; names missing,
 #              extra, and unlisted files. Also verifies that the required JSON
@@ -345,7 +345,7 @@ main() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h|--help)    show_help ;;
-            -V|--version) echo "${SCRIPT_NAME} v0.6.0"; exit 0 ;;
+            -V|--version) echo "${SCRIPT_NAME} v0.6.1"; exit 0 ;;
             -v|--verbose) export LOG_LEVEL=2; shift ;;
             -d|--debug)   export LOG_LEVEL=1; shift ;;
             -q|--quiet)   export LOG_LEVEL=4; shift ;;

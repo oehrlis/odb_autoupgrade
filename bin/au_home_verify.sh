@@ -5,7 +5,7 @@
 # Script.....: au_home_verify.sh
 # Author.....: Stefan Oehrli (oes) stefan.oehrli@oradba.ch
 # Date.......: 2026.10.09
-# Version....: v0.6.0
+# Version....: v0.6.1
 # Purpose....: Verify an Oracle Home against expected values:
 #                - OPatch patch list vs patches_info.json patch numbers
 #                - Binary options (ar -t libknlopt.a) vs source home or expected
@@ -55,7 +55,7 @@ fi
 # SCRIPT DEFAULTS
 # =============================================================================
 
-export SCRIPT_VERSION="v0.6.0"
+export SCRIPT_VERSION="v0.6.1"
 
 OPT_HOME=""
 OPT_SOURCE_HOME=""

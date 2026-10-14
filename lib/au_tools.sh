@@ -6,7 +6,7 @@
 # Author.....: Stefan Oehrli (oes) stefan.oehrli@oradba.ch
 # Editor.....: Stefan Oehrli
 # Date.......: 2026.10.09
-# Version....: v0.6.0
+# Version....: v0.6.1
 # Purpose....: JAR manifest helpers, keystore state/check/backup, patches_info
 #              access, log scanning, SHA-256 and file stat helpers.
 #              Provides: au_jar_version, au_version_compare,

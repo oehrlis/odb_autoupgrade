@@ -6,7 +6,7 @@
 # Author.....: Stefan Oehrli (oes) stefan.oehrli@oradba.ch
 # Editor.....: Stefan Oehrli
 # Date.......: 2026.10.09
-# Version....: v0.6.0
+# Version....: v0.6.1
 # Purpose....: Download or install autoupgrade.jar; compare versions; refuse
 #              downgrade unless --force; keep N versioned backups; warn when
 #              keystore files are older than the new JAR build date.
@@ -45,7 +45,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 LIB_DIR="${SCRIPT_DIR}/../lib"
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 readonly SCRIPT_NAME
-: "${SCRIPT_VERSION:=0.6.0}"
+: "${SCRIPT_VERSION:=0.6.1}"
 
 SCRIPT_BASE="$(dirname "${SCRIPT_DIR}")"
 if [[ -n "${AUTOUPGRADE_BASE:-}" && "${AUTOUPGRADE_BASE}" != "${SCRIPT_BASE}" ]]; then
